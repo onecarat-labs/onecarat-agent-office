@@ -3,9 +3,9 @@
 import { createRequire as __officeCreateRequire } from 'node:module'; const require = __officeCreateRequire(import.meta.url);
 
 // packages/launcher/src/cli.ts
-import fs2 from "node:fs";
+import fs4 from "node:fs";
 import http from "node:http";
-import path2 from "node:path";
+import path4 from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -65,14 +65,88 @@ function childEnv(env = process.env, extra = {}) {
   return { ...out, ...extra };
 }
 
+// packages/event-bridge/src/claude-path.ts
+import fs2 from "node:fs";
+import path2 from "node:path";
+var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+function envGet(env, name) {
+  const k = Object.keys(env).find((x) => x.toUpperCase() === name);
+  return k ? env[k] : void 0;
+}
+function resolveClaude(env = process.env, platform = process.platform) {
+  const win = platform === "win32";
+  const entries = (envGet(env, "PATH") ?? "").split(win ? ";" : ":");
+  const names = win ? (envGet(env, "PATHEXT") ?? DEFAULT_PATHEXT).split(";").filter(Boolean).map((e) => "claude" + e.toLowerCase()) : ["claude"];
+  for (const raw of entries) {
+    const dir = raw.replace(/^"|"$/g, "");
+    if (!dir || dir === "." || !path2.isAbsolute(dir)) continue;
+    for (const name of names) {
+      const f = path2.join(dir, name);
+      try {
+        if (!fs2.statSync(f).isFile()) continue;
+        if (!win) fs2.accessSync(f, fs2.constants.X_OK);
+        if (f.includes('"')) continue;
+        return f;
+      } catch {
+      }
+    }
+  }
+  return void 0;
+}
+
+// packages/launcher/src/args.ts
+import fs3 from "node:fs";
+import path3 from "node:path";
+var COMMANDS = ["check", "start", "stop", "status", "open"];
+function parseLauncherArgs(argv, exists = (d) => isDir(d)) {
+  const [first = "status", ...rest] = argv;
+  if (!COMMANDS.includes(first)) return { error: `unknown command: ${first}` };
+  const out = { cmd: first, noTerminal: false, noOpen: false };
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--no-open") out.noOpen = true;
+    else if (a === "--no-terminal") out.noTerminal = true;
+    else if (a === "--port") {
+      const v = rest[++i];
+      if (!v || !/^\d{4,5}$/.test(v) || Number(v) < 1024 || Number(v) > 65535) return { error: "--port needs a number between 1024 and 65535" };
+      out.port = Number(v);
+    } else if (a === "--cwd") {
+      const v = rest[++i];
+      if (!v) return { error: "--cwd needs a folder" };
+      const dir = path3.resolve(v);
+      if (!exists(dir)) return { error: `--cwd: not a folder: ${dir}` };
+      out.cwd = dir;
+    } else return { error: `unknown option: ${a}` };
+  }
+  return out;
+}
+function bridgeArgs(a, defaultCwd) {
+  const args = ["--cwd", a.cwd ?? defaultCwd];
+  if (a.port) args.push("--port", String(a.port));
+  if (a.noTerminal) args.push("--no-terminal");
+  return args;
+}
+function isDir(d) {
+  try {
+    return fs3.statSync(d).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // packages/launcher/src/cli.ts
 var MIN_NODE_MAJOR = 18;
-var here = path2.dirname(fileURLToPath(import.meta.url));
-var bundledBridge = path2.join(here, "bridge.mjs");
-var devBridge = path2.resolve(here, "../../event-bridge/src/main.ts");
-var bridgeEntry = fs2.existsSync(bundledBridge) ? bundledBridge : devBridge;
-var [cmd = "status", ...rest] = process.argv.slice(2);
-var noOpen = rest.includes("--no-open");
+var here = path4.dirname(fileURLToPath(import.meta.url));
+var bundledBridge = path4.join(here, "bridge.mjs");
+var devBridge = path4.resolve(here, "../../event-bridge/src/main.ts");
+var bridgeEntry = fs4.existsSync(bundledBridge) ? bundledBridge : devBridge;
+var parsed = parseLauncherArgs(process.argv.slice(2));
+if ("error" in parsed) {
+  console.error(parsed.error);
+  console.error("Usage: office <check|start|stop|status|open> [--port N] [--cwd DIR] [--no-terminal] [--no-open]");
+  process.exit(2);
+}
+var opts = parsed;
 function health(port, token, timeoutMs = 800) {
   return new Promise((resolve) => {
     const headers = token ? { "x-office-token": token } : void 0;
@@ -106,8 +180,8 @@ function pidAlive(pid) {
 async function running() {
   const info = readRuntimeFile();
   if (!info) return void 0;
-  if (pidAlive(info.pid) && (await health(info.port)).ok) return info;
-  if (!pidAlive(info.pid)) removeRuntimeFile(info.pid);
+  if ((await health(info.port)).ok) return info;
+  removeRuntimeFile(info.pid);
   return void 0;
 }
 function openOffice(info) {
@@ -116,7 +190,7 @@ function openOffice(info) {
 function terminalLine(h) {
   if (!h.terminal) return "";
   if (!h.terminal.available) return `  Terminal: unavailable (${h.terminal.reason}). Office is read-only; use Claude Code in your own terminal.`;
-  return `  Terminal: claude ${h.terminal.running ? "running" : "starts"} in ${h.terminal.cwd}`;
+  return `  Terminal: claude ${h.terminal.running ? "running" : "starts"} in ${h.terminal.cwd}${h.terminal.claudePath ? ` (${h.terminal.claudePath})` : ""}`;
 }
 function openBrowser(url) {
   const [c, ...a] = process.platform === "win32" ? ["rundll32.exe", "url.dll,FileProtocolHandler", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
@@ -130,11 +204,10 @@ async function start() {
   const cur = await running();
   if (cur) {
     console.log(`Already running: http://127.0.0.1:${cur.port}/`);
-    if (!noOpen) openOffice(cur);
+    if (!opts.noOpen) openOffice(cur);
     return;
   }
-  const args = [bridgeEntry, ...rest.filter((a) => a !== "--no-open")];
-  if (!args.includes("--cwd")) args.push("--cwd", process.cwd());
+  const args = [bridgeEntry, ...bridgeArgs(opts, process.cwd())];
   const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: childEnv() });
   child.unref();
   for (let i = 0; i < 40; i++) {
@@ -145,7 +218,7 @@ async function start() {
       console.log(`Started Onecarat Agent Office: http://127.0.0.1:${info.port}/`);
       const line = terminalLine(h);
       if (line) console.log(line);
-      if (!noOpen) openOffice(info);
+      if (!opts.noOpen) openOffice(info);
       return;
     }
     if (child.exitCode !== null) break;
@@ -158,6 +231,11 @@ async function stop() {
   const info = readRuntimeFile();
   if (!info) {
     console.log("Not running.");
+    return;
+  }
+  if (!(await health(info.port, info.token)).ok) {
+    removeRuntimeFile(info.pid);
+    console.log("Not running (a stale runtime file was removed).");
     return;
   }
   await new Promise((resolve) => {
@@ -202,12 +280,14 @@ function check() {
   console.log(`Node.js ${process.versions.node} (${process.platform}/${process.arch}) \u2014 ${ok ? "OK" : `too old, need ${MIN_NODE_MAJOR}+`}`);
   console.log(`Bridge: ${bridgeEntry}`);
   const plat = `${process.platform}-${process.arch}`;
-  const vendor = [path2.join(here, "vendor/node-pty"), path2.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")].find((d) => fs2.existsSync(d));
-  const term = vendor && fs2.existsSync(path2.join(vendor, "prebuilds", plat));
+  const vendor = [path4.join(here, "vendor/node-pty"), path4.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")].find((d) => fs4.existsSync(d));
+  const term = vendor && fs4.existsSync(path4.join(vendor, "prebuilds", plat));
+  const claude = resolveClaude();
   console.log(`Built-in terminal: ${term ? `available (${plat})` : `not available for ${plat} \u2014 Office runs read-only`}`);
+  console.log(`claude: ${claude ?? "not found on PATH \u2014 the built-in terminal cannot start it"}`);
   if (!ok) process.exitCode = 1;
 }
-switch (cmd) {
+switch (opts.cmd) {
   case "check":
     check();
     break;
@@ -226,7 +306,4 @@ switch (cmd) {
     else console.log('Not running. Use "start".');
     break;
   }
-  default:
-    console.log("Usage: office <check|start|stop|status|open> [--no-open] [--port N] [--cwd DIR] [--no-terminal]");
-    process.exitCode = 2;
 }

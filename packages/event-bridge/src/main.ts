@@ -2,6 +2,7 @@
 // Onecarat Agent Office bridge: localhost-only event receiver + UI server (+ optional embedded terminal).
 // It never calls a model, never reads Claude credentials, and keeps events and terminal output in memory only.
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -10,7 +11,7 @@ import { newToken } from './security.ts';
 import { readRuntimeFile, removeRuntimeFile, runtimeFilePath, writeRuntimeFile } from './runtime-file.ts';
 import { Terminal, loadPty } from './terminal.ts';
 
-const VERSION = '0.2.0';
+const VERSION = '0.2.1';
 const DEFAULT_PORT = 47821;
 
 const args = process.argv.slice(2);
@@ -21,16 +22,31 @@ const opt = (name: string) => {
 };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const port = Number(opt('port') ?? process.env.ONECARAT_OFFICE_PORT ?? DEFAULT_PORT);
 // Bundled layout: dist/bridge.mjs + dist/ui/ + dist/vendor/. Dev layout: packages/event-bridge/src.
-const uiDir = opt('ui-dir') ?? (fs.existsSync(path.join(here, 'ui', 'index.html')) ? path.join(here, 'ui') : path.resolve(here, '../../office-ui/dist'));
+const bundled = fs.existsSync(path.join(here, 'ui', 'index.html'));
+
+// Development-only flags (serve another folder as the UI, open another page with the key, allow another
+// origin). They would hand the access key to arbitrary content, so the shipped bundle ignores them: they only
+// work when the bridge runs from the source tree, and even then only for loopback URLs.
+const LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}\/?$/;
+const devOpt = (name: string) => (bundled ? undefined : opt(name));
+const devOrigin = devOpt('dev-origin');
+const openBase = devOpt('open-base');
+if (devOrigin && !LOOPBACK.test(devOrigin)) fail(`--dev-origin must be a loopback origin, got ${devOrigin}`);
+if (openBase && !LOOPBACK.test(openBase)) fail(`--open-base must be a loopback URL, got ${openBase}`);
+
+const port = Number(opt('port') ?? process.env.ONECARAT_OFFICE_PORT ?? DEFAULT_PORT);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) fail(`--port must be between 1024 and 65535, got ${opt('port')}`);
+const uiDir = devOpt('ui-dir') ?? (bundled ? path.join(here, 'ui') : path.resolve(here, '../../office-ui/dist'));
 const ptyCandidates = [path.join(here, 'vendor', 'node-pty'), path.resolve(here, '../../../plugin/onecarat-agent-office/dist/vendor/node-pty')];
 // Folder the embedded `claude` starts in: --cwd, else the folder the launcher was run from.
 const termCwd = path.resolve(opt('cwd') ?? process.cwd());
-const devOrigins = opt('dev-origin') ? [opt('dev-origin')!] : [];
+const devOrigins = devOrigin ? [devOrigin.replace(/\/$/, '')] : [];
 
+// Another bridge running? Trust the runtime file only if something at that port answers as Office
+// (a stale file whose pid was reused by an unrelated process must not block the start).
 const existing = readRuntimeFile();
-if (existing && isAlive(existing.pid) && existing.pid !== process.pid) {
+if (existing && existing.pid !== process.pid && isAlive(existing.pid) && (await isOffice(existing.port, existing.token))) {
   console.error(`Onecarat Agent Office is already running (pid ${existing.pid}) at http://127.0.0.1:${existing.port}/`);
   process.exit(3);
 }
@@ -49,13 +65,14 @@ bridge.server.on('error', (e: NodeJS.ErrnoException) => {
 bridge.server.listen(port, '127.0.0.1', () => {
   writeRuntimeFile({ port, token, pid: process.pid, startedAt: Date.now(), version: VERSION });
   const url = `http://127.0.0.1:${port}/`;
+  const t = terminal.state;
   // The token is never printed (output of the skill ends up in the Claude Code transcript).
   console.log(`Onecarat Agent Office ${VERSION}`);
   console.log(`  UI:       ${url}`);
-  console.log(`  terminal: ${load.ok ? `available (claude starts in ${termCwd})` : `unavailable — ${load.reason}; Office runs read-only`}`);
+  console.log(`  terminal: ${t.available ? `available (${t.claudePath} starts in ${termCwd})` : `unavailable — ${t.reason}; Office runs read-only`}`);
   console.log(`  runtime:  ${runtimeFilePath()}`);
   console.log('  Events and terminal output are kept in memory only. Press Ctrl+C to stop.');
-  if (flag('open')) openBrowser(`${opt('open-base') ?? url}#t=${token}`);
+  if (!bundled && flag('open')) openBrowser(`${openBase ?? url}#t=${token}`);
 });
 
 let stopping = false;
@@ -74,6 +91,11 @@ process.on('exit', () => {
   removeRuntimeFile(process.pid);
 });
 
+function fail(msg: string): never {
+  console.error(msg);
+  process.exit(2);
+}
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -81,6 +103,27 @@ function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+function isOffice(p: number, t: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: p, path: '/api/health', timeout: 800, headers: { 'x-office-token': t } }, (res) => {
+      let s = '';
+      res.on('data', (d) => (s += d));
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(s).app === 'onecarat-agent-office');
+        } catch {
+          resolve(false);
+        }
+      });
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
 }
 
 // Windows: explorer.exe drops the URL fragment (#t=…) (measured); the URL protocol handler keeps it.

@@ -25,7 +25,7 @@ export function runtimeFilePath(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platf
 }
 
 export function writeRuntimeFile(info: RuntimeInfo, file = runtimeFilePath()): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(info), { mode: 0o600 });
   fs.renameSync(tmp, file);

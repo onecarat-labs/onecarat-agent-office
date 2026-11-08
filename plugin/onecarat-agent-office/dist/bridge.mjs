@@ -2273,7 +2273,7 @@ var require_websocket = __commonJS({
     "use strict";
     var EventEmitter = __require("events");
     var https = __require("https");
-    var http2 = __require("http");
+    var http3 = __require("http");
     var net = __require("net");
     var tls = __require("tls");
     var { randomBytes, createHash } = __require("crypto");
@@ -2828,7 +2828,7 @@ var require_websocket = __commonJS({
       }
       const defaultPort = isSecure ? 443 : 80;
       const key = randomBytes(16).toString("base64");
-      const request = isSecure ? https.request : http2.request;
+      const request = isSecure ? https.request : http3.request;
       const protocolSet = /* @__PURE__ */ new Set();
       let perMessageDeflate;
       opts.createConnection = opts.createConnection || (isSecure ? tlsConnect : netConnect);
@@ -3324,7 +3324,7 @@ var require_websocket_server = __commonJS({
   "node_modules/ws/lib/websocket-server.js"(exports, module) {
     "use strict";
     var EventEmitter = __require("events");
-    var http2 = __require("http");
+    var http3 = __require("http");
     var { Duplex } = __require("stream");
     var { createHash } = __require("crypto");
     var extension2 = require_extension();
@@ -3405,8 +3405,8 @@ var require_websocket_server = __commonJS({
           );
         }
         if (options.port != null) {
-          this._server = http2.createServer((req, res) => {
-            const body = http2.STATUS_CODES[426];
+          this._server = http3.createServer((req, res) => {
+            const body = http3.STATUS_CODES[426];
             res.writeHead(426, {
               "Content-Length": body.length,
               "Content-Type": "text/plain"
@@ -3695,7 +3695,7 @@ var require_websocket_server = __commonJS({
       this.destroy();
     }
     function abortHandshake(socket, code, message, headers) {
-      message = message || http2.STATUS_CODES[code];
+      message = message || http3.STATUS_CODES[code];
       headers = {
         Connection: "close",
         "Content-Type": "text/html",
@@ -3704,7 +3704,7 @@ var require_websocket_server = __commonJS({
       };
       socket.once("finish", socket.destroy);
       socket.end(
-        `HTTP/1.1 ${code} ${http2.STATUS_CODES[code]}\r
+        `HTTP/1.1 ${code} ${http3.STATUS_CODES[code]}\r
 ` + Object.keys(headers).map((h) => `${h}: ${headers[h]}`).join("\r\n") + "\r\n\r\n" + message
       );
     }
@@ -3721,8 +3721,9 @@ var require_websocket_server = __commonJS({
 });
 
 // packages/event-bridge/src/main.ts
-import fs4 from "node:fs";
-import path4 from "node:path";
+import fs5 from "node:fs";
+import http2 from "node:http";
+import path5 from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
@@ -4042,7 +4043,7 @@ function crossSite(req, port2, devOrigins2 = []) {
   const site = req.headers["sec-fetch-site"];
   if (site && site !== "same-origin" && site !== "none") return true;
   const origin = req.headers.origin;
-  if (origin && origin !== `http://127.0.0.1:${port2}` && origin !== `http://localhost:${port2}`) return true;
+  if (origin && origin !== `http://127.0.0.1:${port2}`) return true;
   return false;
 }
 var SECURITY_HEADERS = {
@@ -4079,7 +4080,14 @@ function createBridge(opts) {
     res.writeHead(code, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
     res.end(body);
   };
-  const server = http.createServer(async (req, res) => {
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch((e) => {
+      stats.rejected++;
+      if (!res.headersSent) send(res, e instanceof URIError ? 400 : 500, "{}");
+      else res.destroy();
+    });
+  });
+  async function handle(req, res) {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     if (!hostAllowed(req, opts.port)) {
       stats.rejected++;
@@ -4141,7 +4149,13 @@ function createBridge(opts) {
       return;
     }
     if ((req.method === "GET" || req.method === "HEAD") && uiRoot) {
-      const rel = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+      let rel;
+      try {
+        rel = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+      } catch {
+        return send(res, 400, "bad path", "text/plain");
+      }
+      if (rel.includes("\0")) return send(res, 400, "bad path", "text/plain");
       const file = path.resolve(uiRoot, "." + rel);
       if (!file.startsWith(uiRoot + path.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
       fs.readFile(file, (err, data) => {
@@ -4155,7 +4169,7 @@ function createBridge(opts) {
       return;
     }
     send(res, 404, "{}");
-  });
+  }
   const wss = new import_websocket_server.default({ noServer: true, maxPayload: 64 * 1024, handleProtocols: () => WS_PROTOCOL });
   const allowedOrigins = /* @__PURE__ */ new Set([`http://127.0.0.1:${opts.port}`, ...opts.devOrigins ?? []]);
   const refuse = (socket, code, text) => {
@@ -4167,8 +4181,13 @@ Content-Length: 0\r
 `);
   };
   server.on("upgrade", (req, socket, head) => {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    if (url.pathname !== "/pty" || !opts.terminal) return refuse(socket, 404, "Not Found");
+    let pathname;
+    try {
+      pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+    } catch {
+      return refuse(socket, 400, "Bad Request");
+    }
+    if (pathname !== "/pty" || !opts.terminal) return refuse(socket, 404, "Not Found");
     if (!hostAllowed(req, opts.port)) return refuse(socket, 421, "Misdirected Request");
     if (!allowedOrigins.has(String(req.headers.origin ?? ""))) return refuse(socket, 403, "Forbidden");
     if (!tokenMatches(protocolToken(req.headers["sec-websocket-protocol"]), opts.token)) return refuse(socket, 403, "Forbidden");
@@ -4233,7 +4252,7 @@ function runtimeFilePath(env, platform) {
   return path2.join(runtimeDir(env, platform), "bridge.json");
 }
 function writeRuntimeFile(info, file = runtimeFilePath()) {
-  fs2.mkdirSync(path2.dirname(file), { recursive: true });
+  fs2.mkdirSync(path2.dirname(file), { recursive: true, mode: 448 });
   const tmp = `${file}.${process.pid}.tmp`;
   fs2.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
   fs2.renameSync(tmp, file);
@@ -4257,9 +4276,9 @@ function removeRuntimeFile(pid, file = runtimeFilePath()) {
 
 // packages/event-bridge/src/terminal.ts
 import crypto2 from "node:crypto";
-import fs3 from "node:fs";
+import fs4 from "node:fs";
 import { createRequire } from "node:module";
-import path3 from "node:path";
+import path4 from "node:path";
 
 // packages/event-bridge/src/child-env.ts
 var DROP_EXACT = /* @__PURE__ */ new Set(["CLAUDECODE", "AI_AGENT", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PROJECT_DIR", "CLAUDE_ENV_FILE"]);
@@ -4286,14 +4305,50 @@ function childEnv(env = process.env, extra = {}) {
   return { ...out, ...extra };
 }
 
+// packages/event-bridge/src/claude-path.ts
+import fs3 from "node:fs";
+import path3 from "node:path";
+var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+function envGet(env, name) {
+  const k = Object.keys(env).find((x) => x.toUpperCase() === name);
+  return k ? env[k] : void 0;
+}
+function resolveClaude(env = process.env, platform = process.platform) {
+  const win = platform === "win32";
+  const entries = (envGet(env, "PATH") ?? "").split(win ? ";" : ":");
+  const names = win ? (envGet(env, "PATHEXT") ?? DEFAULT_PATHEXT).split(";").filter(Boolean).map((e) => "claude" + e.toLowerCase()) : ["claude"];
+  for (const raw of entries) {
+    const dir = raw.replace(/^"|"$/g, "");
+    if (!dir || dir === "." || !path3.isAbsolute(dir)) continue;
+    for (const name of names) {
+      const f = path3.join(dir, name);
+      try {
+        if (!fs3.statSync(f).isFile()) continue;
+        if (!win) fs3.accessSync(f, fs3.constants.X_OK);
+        if (f.includes('"')) continue;
+        return f;
+      } catch {
+      }
+    }
+  }
+  return void 0;
+}
+function claudeCommand(exe, sessionId, env = process.env, platform = process.platform) {
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new Error("bad session id");
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(exe)) {
+    return { file: envGet(env, "COMSPEC") || "cmd.exe", args: `/d /s /c ""${exe}" --session-id ${sessionId}"` };
+  }
+  return { file: exe, args: ["--session-id", sessionId] };
+}
+
 // packages/event-bridge/src/terminal.ts
 function loadPty(candidates) {
   const req = createRequire(import.meta.url);
   const plat = `${process.platform}-${process.arch}`;
   const reasons = [];
   for (const dir of candidates) {
-    if (!fs3.existsSync(path3.join(dir, "package.json"))) continue;
-    const hasNative = fs3.existsSync(path3.join(dir, "prebuilds", plat)) || fs3.existsSync(path3.join(dir, "build", "Release"));
+    if (!fs4.existsSync(path4.join(dir, "package.json"))) continue;
+    const hasNative = fs4.existsSync(path4.join(dir, "prebuilds", plat)) || fs4.existsSync(path4.join(dir, "build", "Release"));
     if (!hasNative) {
       reasons.push(`no node-pty binary for ${plat}`);
       continue;
@@ -4308,11 +4363,6 @@ function loadPty(candidates) {
   }
   return { ok: false, reason: reasons[0] ?? "node-pty is not bundled" };
 }
-function defaultClaudeCommand(sessionId) {
-  const args2 = ["--session-id", sessionId];
-  if (process.platform === "win32") return { file: process.env.ComSpec || "cmd.exe", args: ["/d", "/s", "/c", "claude", ...args2] };
-  return { file: "claude", args: args2 };
-}
 var Terminal = class {
   opts;
   proc;
@@ -4322,9 +4372,20 @@ var Terminal = class {
   st;
   cols = 100;
   rows = 30;
+  command;
   constructor(opts) {
     this.opts = opts;
-    this.st = { available: opts.load.ok, reason: opts.load.ok ? void 0 : opts.load.reason, running: false, cwd: opts.cwd };
+    let reason = opts.load.ok ? void 0 : opts.load.reason;
+    let claudePath;
+    if (opts.command) this.command = opts.command;
+    else {
+      claudePath = resolveClaude(opts.env ?? process.env);
+      if (claudePath) {
+        const exe = claudePath;
+        this.command = (sid) => claudeCommand(exe, sid, opts.env ?? process.env);
+      } else if (!reason) reason = "claude was not found on PATH";
+    }
+    this.st = { available: !reason, reason, running: false, cwd: opts.cwd, claudePath };
   }
   get state() {
     return { ...this.st };
@@ -4347,15 +4408,16 @@ var Terminal = class {
   /** Start `claude` (optionally in another folder). Returns an error string, or undefined on success. */
   start(cwd) {
     if (!this.opts.load.ok) return this.opts.load.reason;
+    if (!this.command) return this.st.reason ?? "claude was not found on PATH";
     if (this.proc) return "already running";
     const dir = cwd ?? this.st.cwd;
     try {
-      if (!fs3.statSync(dir).isDirectory()) return "not a folder";
+      if (!fs4.statSync(dir).isDirectory()) return "not a folder";
     } catch {
       return "folder not found";
     }
     const sessionId = crypto2.randomUUID();
-    const { file, args: args2 } = (this.opts.command ?? defaultClaudeCommand)(sessionId);
+    const { file, args: args2 } = this.command(sessionId);
     this.clearScrollback();
     let proc;
     try {
@@ -4364,7 +4426,9 @@ var Terminal = class {
         cols: this.cols,
         rows: this.rows,
         cwd: dir,
-        env: childEnv(this.opts.env ?? process.env, { COLORTERM: "truecolor" })
+        // NoDefaultCurrentDirectoryInExePath: defense in depth for the shells claude itself starts (cmd.exe would
+        // otherwise look in the working folder first).
+        env: childEnv(this.opts.env ?? process.env, { COLORTERM: "truecolor", ...process.platform === "win32" ? { NoDefaultCurrentDirectoryInExePath: "1" } : {} })
       });
     } catch (e) {
       return e.message.split("\n")[0];
@@ -4417,7 +4481,7 @@ var Terminal = class {
 };
 
 // packages/event-bridge/src/main.ts
-var VERSION = "0.2.0";
+var VERSION = "0.2.1";
 var DEFAULT_PORT = 47821;
 var args = process.argv.slice(2);
 var flag = (name) => args.includes(`--${name}`);
@@ -4425,14 +4489,22 @@ var opt = (name) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : void 0;
 };
-var here = path4.dirname(fileURLToPath(import.meta.url));
+var here = path5.dirname(fileURLToPath(import.meta.url));
+var bundled = fs5.existsSync(path5.join(here, "ui", "index.html"));
+var LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}\/?$/;
+var devOpt = (name) => bundled ? void 0 : opt(name);
+var devOrigin = devOpt("dev-origin");
+var openBase = devOpt("open-base");
+if (devOrigin && !LOOPBACK.test(devOrigin)) fail(`--dev-origin must be a loopback origin, got ${devOrigin}`);
+if (openBase && !LOOPBACK.test(openBase)) fail(`--open-base must be a loopback URL, got ${openBase}`);
 var port = Number(opt("port") ?? process.env.ONECARAT_OFFICE_PORT ?? DEFAULT_PORT);
-var uiDir = opt("ui-dir") ?? (fs4.existsSync(path4.join(here, "ui", "index.html")) ? path4.join(here, "ui") : path4.resolve(here, "../../office-ui/dist"));
-var ptyCandidates = [path4.join(here, "vendor", "node-pty"), path4.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")];
-var termCwd = path4.resolve(opt("cwd") ?? process.cwd());
-var devOrigins = opt("dev-origin") ? [opt("dev-origin")] : [];
+if (!Number.isInteger(port) || port < 1024 || port > 65535) fail(`--port must be between 1024 and 65535, got ${opt("port")}`);
+var uiDir = devOpt("ui-dir") ?? (bundled ? path5.join(here, "ui") : path5.resolve(here, "../../office-ui/dist"));
+var ptyCandidates = [path5.join(here, "vendor", "node-pty"), path5.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")];
+var termCwd = path5.resolve(opt("cwd") ?? process.cwd());
+var devOrigins = devOrigin ? [devOrigin.replace(/\/$/, "")] : [];
 var existing = readRuntimeFile();
-if (existing && isAlive(existing.pid) && existing.pid !== process.pid) {
+if (existing && existing.pid !== process.pid && isAlive(existing.pid) && await isOffice(existing.port, existing.token)) {
   console.error(`Onecarat Agent Office is already running (pid ${existing.pid}) at http://127.0.0.1:${existing.port}/`);
   process.exit(3);
 }
@@ -4448,12 +4520,13 @@ bridge.server.on("error", (e) => {
 bridge.server.listen(port, "127.0.0.1", () => {
   writeRuntimeFile({ port, token, pid: process.pid, startedAt: Date.now(), version: VERSION });
   const url = `http://127.0.0.1:${port}/`;
+  const t = terminal.state;
   console.log(`Onecarat Agent Office ${VERSION}`);
   console.log(`  UI:       ${url}`);
-  console.log(`  terminal: ${load.ok ? `available (claude starts in ${termCwd})` : `unavailable \u2014 ${load.reason}; Office runs read-only`}`);
+  console.log(`  terminal: ${t.available ? `available (${t.claudePath} starts in ${termCwd})` : `unavailable \u2014 ${t.reason}; Office runs read-only`}`);
   console.log(`  runtime:  ${runtimeFilePath()}`);
   console.log("  Events and terminal output are kept in memory only. Press Ctrl+C to stop.");
-  if (flag("open")) openBrowser(`${opt("open-base") ?? url}#t=${token}`);
+  if (!bundled && flag("open")) openBrowser(`${openBase ?? url}#t=${token}`);
 });
 var stopping = false;
 async function shutdown(reason) {
@@ -4470,6 +4543,10 @@ process.on("exit", () => {
   terminal.stop();
   removeRuntimeFile(process.pid);
 });
+function fail(msg) {
+  console.error(msg);
+  process.exit(2);
+}
 function isAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -4477,6 +4554,26 @@ function isAlive(pid) {
   } catch {
     return false;
   }
+}
+function isOffice(p, t) {
+  return new Promise((resolve) => {
+    const req = http2.get({ host: "127.0.0.1", port: p, path: "/api/health", timeout: 800, headers: { "x-office-token": t } }, (res) => {
+      let s = "";
+      res.on("data", (d) => s += d);
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(s).app === "onecarat-agent-office");
+        } catch {
+          resolve(false);
+        }
+      });
+    });
+    req.on("error", () => resolve(false));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
 }
 function openBrowser(url) {
   const [cmd, ...a] = process.platform === "win32" ? ["rundll32.exe", "url.dll,FileProtocolHandler", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];

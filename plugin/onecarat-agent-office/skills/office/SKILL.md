@@ -2,7 +2,7 @@
 name: office
 description: Start/stop/status of Onecarat Agent Office, a local browser view of Claude Code's agents (e.g. 「Onecarat Agent Officeを起動して」).
 argument-hint: "[start|stop|status|open|check]"
-allowed-tools: Bash(node --version), Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" *), PowerShell(node --version), PowerShell(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" *)
+allowed-tools: Bash(node --version), PowerShell(node --version), Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" start), Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" start --port *), Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" stop), Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" status), Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" open), Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" check), PowerShell(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" start), PowerShell(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" start --port *), PowerShell(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" stop), PowerShell(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" status), PowerShell(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" open), PowerShell(node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" check)
 ---
 
 # Onecarat Agent Office
@@ -34,7 +34,7 @@ Run exactly one of these (quote the path as shown):
 | open the page again (with its access key) | `node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" open` |
 | environment check | `node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" check` |
 
-Do not run any other commands for this skill, and do not edit any settings file.
+Do not run any other commands for this skill, do not add other options (the launcher accepts only `--port N`, `--cwd DIR`, `--no-terminal`, `--no-open` and refuses anything else), and do not edit any settings file.
 
 ## 3. Tell the user
 

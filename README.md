@@ -94,7 +94,7 @@ Office never edits `~/.claude/settings.json` directly; removing the plugin remov
 | Nothing shows up | `/onecarat-agent-office:office status`; check `claude plugin list`; new sessions appear once the plugin is enabled |
 | Cannot start after a crash | `/onecarat-agent-office:office stop`, then `start` |
 | "No access key" in the page | You opened the URL by hand. Ask "Open Onecarat Agent Office" or run `/onecarat-agent-office:office open` |
-| "Built-in terminal is not available" | No node-pty binary for this OS/CPU (Linux today). Office still shows everything; use Claude Code in your own terminal |
+| "Built-in terminal is not available" | No node-pty binary for this OS/CPU (Linux today), or no `claude` on PATH (`/onecarat-agent-office:office check` prints which). Office still shows everything; use Claude Code in your own terminal |
 
 ## Development
 

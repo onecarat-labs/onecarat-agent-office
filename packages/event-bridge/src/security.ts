@@ -30,7 +30,7 @@ export function crossSite(req: IncomingMessage, port: number, devOrigins: string
   const site = req.headers['sec-fetch-site'];
   if (site && site !== 'same-origin' && site !== 'none') return true;
   const origin = req.headers.origin;
-  if (origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return true;
+  if (origin && origin !== `http://127.0.0.1:${port}`) return true;
   return false;
 }
 

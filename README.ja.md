@@ -94,7 +94,7 @@ Office は `~/.claude/settings.json` を直接編集しません。プラグイ�
 | 何も表示されない | 状態の確認（`/onecarat-agent-office:office status`）。プラグインが有効か確認（`claude plugin list`）。新しく始めたセッションから表示されます |
 | 強制終了したあとに起動できない | `/onecarat-agent-office:office stop` で後片付けしてから `start` |
 | ページに「キーなし」と出る | URL を手で開いたためです。「Onecarat Agent Officeを開いて」と頼むか、`/onecarat-agent-office:office open` を実行してください |
-| 「内蔵ターミナルを使えません」と出る | この OS／CPU 向けの node-pty がありません（いまは Linux）。表示はすべて動くので、Claude Code はいつものターミナルで使ってください |
+| 「内蔵ターミナルを使えません」と出る | この OS／CPU 向けの node-pty が無い（いまは Linux）か、PATH に `claude` が無い場合です（`/onecarat-agent-office:office check` でどちらか分かります）。表示はすべて動くので、Claude Code はいつものターミナルで使ってください |
 
 ## 開発
 

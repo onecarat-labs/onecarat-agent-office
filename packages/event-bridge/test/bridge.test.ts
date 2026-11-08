@@ -11,9 +11,15 @@ import { pickHookFields, runtimeFilePath as fwdRuntimeFilePath } from '../../../
 
 const PORT = 47911;
 const TOKEN = 'a'.repeat(48);
-const bridge = createBridge({ port: PORT, token: TOKEN, version: 'test', reorderWindowMs: 50 });
+// A tiny static UI so the file-serving branch (and its path handling) is exercised.
+const uiDir = fs.mkdtempSync(path.join(os.tmpdir(), 'office-ui-'));
+fs.writeFileSync(path.join(uiDir, 'index.html'), '<!doctype html><title>t</title>');
+const bridge = createBridge({ port: PORT, token: TOKEN, version: 'test', reorderWindowMs: 50, uiDir });
 await new Promise<void>((r) => bridge.server.listen(PORT, '127.0.0.1', () => r()));
-after(() => bridge.close());
+after(async () => {
+  await bridge.close();
+  fs.rmSync(uiDir, { recursive: true, force: true });
+});
 
 function req(opts: { method?: string; path: string; headers?: Record<string, string>; body?: string }): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
@@ -54,6 +60,15 @@ test('UI endpoints refuse cross-site requests (DNS rebinding / CSRF)', async () 
   assert.equal((await req({ path: '/api/health', headers: { origin: 'http://localhost:9999' } })).status, 403);
   assert.equal((await req({ method: 'POST', path: '/api/clear', headers: { origin: 'https://evil.example' } })).status, 403);
   assert.equal((await req({ method: 'POST', path: '/api/shutdown' })).status, 401);
+});
+
+test('a malformed %-escape or odd path is answered, not a crash', async () => {
+  assert.equal((await req({ path: '/%E0%A4%A' })).status, 400);
+  assert.equal((await req({ path: '/%00' })).status, 400);
+  assert.equal((await req({ path: '/' })).status, 200);
+  assert.equal((await req({ path: '/..%2f..%2fetc%2fpasswd' })).status, 404);
+  assert.equal((await req({ path: '/%5c..%5c..%5cwindows%5cwin.ini' })).status, 404);
+  assert.equal((await req({ path: '/api/health' })).status, 200);
 });
 
 test('reorders out-of-order async hook posts by hook start time', async () => {

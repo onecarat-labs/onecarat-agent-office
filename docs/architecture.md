@@ -50,11 +50,12 @@ Claude Code session (terminal / IDE / Desktop app)
 - `POST /hook` refuses browser requests (403), a missing key, non-JSON (415) and bodies over 512 KB (413). It answers 200 first, then processes, through a 300 ms ReorderBuffer ordered by hook start time (`x-office-hook-time`, used if within 60 s of the receive time).
 - `/events` (SSE: snapshot, then batches, ping every 15 s), `/api/clear` and `/api/shutdown` need the key. `/api/health` without the key says only whether this is Office.
 - WebSocket `/pty`: Host, exact Origin and the key are checked before the upgrade. The key arrives as subprotocol `office-token.<token>`; the server answers only `office.v1`.
-- `terminal.ts`: the bridge fixes the command (`claude --session-id <uuid>`; nothing else, no permission mode). Scrollback in memory only, up to 512 KB. Output is never parsed. Without node-pty, read-only.
+- `terminal.ts`: the bridge fixes the command (`claude --session-id <uuid>`; nothing else, no permission mode). `claude-path.ts` resolves `claude` to an absolute path from PATH once (never from the working folder: cmd.exe looks there first). Scrollback in memory only, up to 512 KB. Output is never parsed. Without node-pty or without `claude`, read-only.
 - `child-env.ts`: removes the calling session's markers and private channels (`CLAUDECODE`, `CLAUDE_CODE_SESSION*`, `CLAUDE_CODE_MESSAGING_*`, `CLAUDE_PLUGIN_*` …). Keeps the user's configuration (`CLAUDE_CONFIG_DIR`, `ANTHROPIC_*`, provider settings).
 
 ### launcher
 - No run-time dependencies. Calls no model and touches no credentials.
+- `args.ts`: options are an allow-list (`--port`, `--cwd`, `--no-terminal`, `--no-open`); nothing else is passed to the bridge, because the plugin skill pre-approves the launcher command.
 - `start`: if running, only opens the page. Otherwise starts the bridge detached (with `--cwd` = the launcher's folder) and waits for its pid and health (40 × 150 ms).
 - The key goes only in the URL fragment `#t=`. On Windows the browser is opened with `rundll32 url.dll,FileProtocolHandler` because `explorer.exe` drops the fragment.
 - `stop`: calls `/api/shutdown`; kills the process if it does not exit and removes the runtime file. `check`: Node >= 18 and a node-pty prebuild for this OS/CPU.

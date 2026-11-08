@@ -53,7 +53,16 @@ export function createBridge(opts: BridgeOptions): Bridge {
     res.end(body);
   };
 
-  const server = http.createServer(async (req, res) => {
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch((e) => {
+      // A bad request must never take the bridge down (a malformed %-escape used to).
+      stats.rejected++;
+      if (!res.headersSent) send(res, e instanceof URIError ? 400 : 500, '{}');
+      else res.destroy();
+    });
+  });
+
+  async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (!hostAllowed(req, opts.port)) {
       stats.rejected++;
@@ -125,7 +134,13 @@ export function createBridge(opts: BridgeOptions): Bridge {
 
     // ---- static UI ----
     if ((req.method === 'GET' || req.method === 'HEAD') && uiRoot) {
-      const rel = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+      let rel: string;
+      try {
+        rel = decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname);
+      } catch {
+        return send(res, 400, 'bad path', 'text/plain');
+      }
+      if (rel.includes('\0')) return send(res, 400, 'bad path', 'text/plain');
       const file = path.resolve(uiRoot, '.' + rel);
       if (!file.startsWith(uiRoot + path.sep) && file !== uiRoot) return send(res, 404, 'not found', 'text/plain');
       fs.readFile(file, (err, data) => {
@@ -139,7 +154,7 @@ export function createBridge(opts: BridgeOptions): Bridge {
       return;
     }
     send(res, 404, '{}');
-  });
+  }
 
   // ---- embedded terminal: WebSocket /pty ----
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024, handleProtocols: () => WS_PROTOCOL });
@@ -149,8 +164,13 @@ export function createBridge(opts: BridgeOptions): Bridge {
     socket.end(`HTTP/1.1 ${code} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
   };
   server.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-    if (url.pathname !== '/pty' || !opts.terminal) return refuse(socket, 404, 'Not Found');
+    let pathname: string;
+    try {
+      pathname = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
+    } catch {
+      return refuse(socket, 400, 'Bad Request');
+    }
+    if (pathname !== '/pty' || !opts.terminal) return refuse(socket, 404, 'Not Found');
     // All three checks run before the WebSocket exists: Host (DNS rebinding), exact Origin, token.
     if (!hostAllowed(req, opts.port)) return refuse(socket, 421, 'Misdirected Request');
     if (!allowedOrigins.has(String(req.headers.origin ?? ''))) return refuse(socket, 403, 'Forbidden');

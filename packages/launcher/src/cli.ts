@@ -8,6 +8,8 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { readRuntimeFile, removeRuntimeFile, type RuntimeInfo } from '@onecarat/event-bridge/runtime-file';
 import { childEnv } from '@onecarat/event-bridge/child-env';
+import { resolveClaude } from '@onecarat/event-bridge/claude-path';
+import { bridgeArgs, parseLauncherArgs } from './args.ts';
 
 const MIN_NODE_MAJOR = 18;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -16,14 +18,19 @@ const bundledBridge = path.join(here, 'bridge.mjs');
 const devBridge = path.resolve(here, '../../event-bridge/src/main.ts');
 const bridgeEntry = fs.existsSync(bundledBridge) ? bundledBridge : devBridge;
 
-const [cmd = 'status', ...rest] = process.argv.slice(2);
-const noOpen = rest.includes('--no-open');
+const parsed = parseLauncherArgs(process.argv.slice(2));
+if ('error' in parsed) {
+  console.error(parsed.error);
+  console.error('Usage: office <check|start|stop|status|open> [--port N] [--cwd DIR] [--no-terminal] [--no-open]');
+  process.exit(2);
+}
+const opts = parsed;
 
 interface Health {
   ok: boolean;
   events?: number;
   clients?: number;
-  terminal?: { available: boolean; reason?: string; running: boolean; cwd: string };
+  terminal?: { available: boolean; reason?: string; running: boolean; cwd: string; claudePath?: string };
 }
 
 function health(port: number, token?: string, timeoutMs = 800): Promise<Health> {
@@ -58,12 +65,13 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+/** The runtime file points at a live Office (health answered). A stale file is removed. */
 async function running(): Promise<RuntimeInfo | undefined> {
   const info = readRuntimeFile();
   if (!info) return undefined;
-  if (pidAlive(info.pid) && (await health(info.port)).ok) return info;
-  // Stale file (crashed or force-killed bridge): clean it up so hooks stay silent.
-  if (!pidAlive(info.pid)) removeRuntimeFile(info.pid);
+  if ((await health(info.port)).ok) return info;
+  // Nothing answers there: a crashed or force-killed bridge left the file behind (even if its pid was reused).
+  removeRuntimeFile(info.pid);
   return undefined;
 }
 
@@ -78,7 +86,7 @@ function openOffice(info: { port: number; token: string }) {
 function terminalLine(h: Health): string {
   if (!h.terminal) return '';
   if (!h.terminal.available) return `  Terminal: unavailable (${h.terminal.reason}). Office is read-only; use Claude Code in your own terminal.`;
-  return `  Terminal: claude ${h.terminal.running ? 'running' : 'starts'} in ${h.terminal.cwd}`;
+  return `  Terminal: claude ${h.terminal.running ? 'running' : 'starts'} in ${h.terminal.cwd}${h.terminal.claudePath ? ` (${h.terminal.claudePath})` : ''}`;
 }
 
 // Windows: explorer.exe drops the URL fragment (#t=…) (measured); the URL protocol handler keeps it.
@@ -97,12 +105,12 @@ async function start() {
   const cur = await running();
   if (cur) {
     console.log(`Already running: http://127.0.0.1:${cur.port}/`);
-    if (!noOpen) openOffice(cur);
+    if (!opts.noOpen) openOffice(cur);
     return;
   }
-  const args = [bridgeEntry, ...rest.filter((a) => a !== '--no-open')];
-  // The embedded claude starts where Office was started from (the session that asked for it), unless --cwd is given.
-  if (!args.includes('--cwd')) args.push('--cwd', process.cwd());
+  // Only the allow-listed options reach the bridge. The embedded claude starts where Office was started from
+  // (the session that asked for it) unless --cwd is given.
+  const args = [bridgeEntry, ...bridgeArgs(opts, process.cwd())];
   // Drop the calling Claude Code session's own markers and private channels; keep the user's configuration.
   const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', windowsHide: true, env: childEnv() });
   child.unref();
@@ -114,7 +122,7 @@ async function start() {
       console.log(`Started Onecarat Agent Office: http://127.0.0.1:${info.port}/`);
       const line = terminalLine(h);
       if (line) console.log(line);
-      if (!noOpen) openOffice(info);
+      if (!opts.noOpen) openOffice(info);
       return;
     }
     if (child.exitCode !== null) break;
@@ -128,6 +136,13 @@ async function stop() {
   const info = readRuntimeFile();
   if (!info) {
     console.log('Not running.');
+    return;
+  }
+  // Only a process that answered as Office is ever signalled: a stale file whose pid was reused by something
+  // else must not get killed.
+  if (!(await health(info.port, info.token)).ok) {
+    removeRuntimeFile(info.pid);
+    console.log('Not running (a stale runtime file was removed).');
     return;
   }
   await new Promise<void>((resolve) => {
@@ -174,15 +189,17 @@ function check() {
   const ok = major >= MIN_NODE_MAJOR;
   console.log(`Node.js ${process.versions.node} (${process.platform}/${process.arch}) — ${ok ? 'OK' : `too old, need ${MIN_NODE_MAJOR}+`}`);
   console.log(`Bridge: ${bridgeEntry}`);
-  // The built-in terminal needs an upstream node-pty prebuild for this OS/CPU; without it Office runs read-only.
+  // The built-in terminal needs an upstream node-pty prebuild for this OS/CPU and a `claude` on PATH.
   const plat = `${process.platform}-${process.arch}`;
   const vendor = [path.join(here, 'vendor/node-pty'), path.resolve(here, '../../../plugin/onecarat-agent-office/dist/vendor/node-pty')].find((d) => fs.existsSync(d));
   const term = vendor && fs.existsSync(path.join(vendor, 'prebuilds', plat));
+  const claude = resolveClaude();
   console.log(`Built-in terminal: ${term ? `available (${plat})` : `not available for ${plat} — Office runs read-only`}`);
+  console.log(`claude: ${claude ?? 'not found on PATH — the built-in terminal cannot start it'}`);
   if (!ok) process.exitCode = 1;
 }
 
-switch (cmd) {
+switch (opts.cmd) {
   case 'check': check(); break;
   case 'start': await start(); break;
   case 'stop': await stop(); break;
@@ -193,7 +210,4 @@ switch (cmd) {
     else console.log('Not running. Use "start".');
     break;
   }
-  default:
-    console.log('Usage: office <check|start|stop|status|open> [--no-open] [--port N] [--cwd DIR] [--no-terminal]');
-    process.exitCode = 2;
 }

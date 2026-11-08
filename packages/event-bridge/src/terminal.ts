@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { childEnv } from './child-env.ts';
+import { claudeCommand, resolveClaude, type SpawnSpec } from './claude-path.ts';
 
 export interface PtyProcess {
   pid: number;
@@ -20,7 +21,7 @@ export interface PtyProcess {
   kill(signal?: string): void;
 }
 export interface PtyModule {
-  spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string; env: Record<string, string> }): PtyProcess;
+  spawn(file: string, args: string[] | string, opts: { name: string; cols: number; rows: number; cwd: string; env: Record<string, string> }): PtyProcess;
 }
 export type PtyLoad = { ok: true; pty: PtyModule; from: string } | { ok: false; reason: string };
 
@@ -55,6 +56,8 @@ export interface TerminalState {
   /** --session-id given to the embedded claude, so the UI can follow that session's hook events. */
   sessionId?: string;
   exitCode?: number;
+  /** Absolute path of the claude that is started (resolved from PATH once; never from the working folder). */
+  claudePath?: string;
 }
 
 export type TerminalMessage = { t: 'state'; state: TerminalState } | { t: 'out'; d: string } | { t: 'reset' };
@@ -62,17 +65,10 @@ export type TerminalMessage = { t: 'state'; state: TerminalState } | { t: 'out';
 export interface TerminalOptions {
   load: PtyLoad;
   cwd: string;
-  /** What to run. Fixed by the bridge; never taken from the UI. Default: the user's `claude`. */
-  command?: (sessionId: string) => { file: string; args: string[] };
+  /** What to run. Fixed by the bridge; never taken from the UI. Default: the user's `claude`, by absolute path. */
+  command?: (sessionId: string) => SpawnSpec;
   scrollbackBytes?: number;
   env?: NodeJS.ProcessEnv;
-}
-
-export function defaultClaudeCommand(sessionId: string): { file: string; args: string[] } {
-  const args = ['--session-id', sessionId];
-  // `claude` is found on PATH. On Windows go through cmd so claude.exe / claude.cmd both resolve.
-  if (process.platform === 'win32') return { file: process.env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', 'claude', ...args] };
-  return { file: 'claude', args };
 }
 
 export class Terminal {
@@ -85,9 +81,21 @@ export class Terminal {
   private cols = 100;
   private rows = 30;
 
+  private readonly command: ((sessionId: string) => SpawnSpec) | undefined;
+
   constructor(opts: TerminalOptions) {
     this.opts = opts;
-    this.st = { available: opts.load.ok, reason: opts.load.ok ? undefined : opts.load.reason, running: false, cwd: opts.cwd };
+    let reason = opts.load.ok ? undefined : opts.load.reason;
+    let claudePath: string | undefined;
+    if (opts.command) this.command = opts.command;
+    else {
+      claudePath = resolveClaude(opts.env ?? process.env);
+      if (claudePath) {
+        const exe = claudePath;
+        this.command = (sid) => claudeCommand(exe, sid, opts.env ?? process.env);
+      } else if (!reason) reason = 'claude was not found on PATH';
+    }
+    this.st = { available: !reason, reason, running: false, cwd: opts.cwd, claudePath };
   }
 
   get state(): TerminalState {
@@ -116,6 +124,7 @@ export class Terminal {
   /** Start `claude` (optionally in another folder). Returns an error string, or undefined on success. */
   start(cwd?: string): string | undefined {
     if (!this.opts.load.ok) return this.opts.load.reason;
+    if (!this.command) return this.st.reason ?? 'claude was not found on PATH';
     if (this.proc) return 'already running';
     const dir = cwd ?? this.st.cwd;
     try {
@@ -124,7 +133,7 @@ export class Terminal {
       return 'folder not found';
     }
     const sessionId = crypto.randomUUID();
-    const { file, args } = (this.opts.command ?? defaultClaudeCommand)(sessionId);
+    const { file, args } = this.command(sessionId);
     this.clearScrollback();
     let proc: PtyProcess;
     try {
@@ -133,7 +142,9 @@ export class Terminal {
         cols: this.cols,
         rows: this.rows,
         cwd: dir,
-        env: childEnv(this.opts.env ?? process.env, { COLORTERM: 'truecolor' }),
+        // NoDefaultCurrentDirectoryInExePath: defense in depth for the shells claude itself starts (cmd.exe would
+        // otherwise look in the working folder first).
+        env: childEnv(this.opts.env ?? process.env, { COLORTERM: 'truecolor', ...(process.platform === 'win32' ? { NoDefaultCurrentDirectoryInExePath: '1' } : {}) }),
       });
     } catch (e) {
       return (e as Error).message.split('\n')[0];

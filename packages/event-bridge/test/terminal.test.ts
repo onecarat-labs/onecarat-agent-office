@@ -4,14 +4,15 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { WebSocket } from 'ws';
-import { createBridge, childEnv, loadPty, Terminal, type PtyModule, type PtyProcess, type TerminalMessage } from '../src/index.ts';
+import fs from 'node:fs';
+import { claudeCommand, createBridge, childEnv, loadPty, resolveClaude, Terminal, type PtyModule, type PtyProcess, type TerminalMessage } from '../src/index.ts';
 
 const PORT = 47921;
 const TOKEN = 'b'.repeat(48);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
 // A fake pseudo-terminal: records what the bridge asked for, echoes input back as output.
-const spawned: { file: string; args: string[]; cwd: string; env: Record<string, string> }[] = [];
+const spawned: { file: string; args: string[] | string; cwd: string; env: Record<string, string> }[] = [];
 let live: { write: (d: string) => void; exit: (c: number) => void } | undefined;
 const fakePty: PtyModule = {
   spawn(file, args, o) {
@@ -98,9 +99,10 @@ test('start runs only the bridge-defined command, with session markers removed f
   const s = spawned.at(-1)!;
   assert.equal(s.file, 'claude');
   // Only --session-id: Office passes no permission mode, model or other flag; claude uses the user's own settings.
-  assert.deepEqual(s.args.length, 2);
+  assert.ok(Array.isArray(s.args) && s.args.length === 2);
   assert.equal(s.args[0], '--session-id');
   assert.match(s.args[1]!, /^[0-9a-f-]{36}$/);
+  if (process.platform === 'win32') assert.equal(s.env.NoDefaultCurrentDirectoryInExePath, '1');
   assert.equal(s.cwd, os.tmpdir());
   assert.equal(s.env.CLAUDECODE, undefined);
   assert.equal(s.env.CLAUDE_CODE_MESSAGING_TOKEN, undefined);
@@ -135,7 +137,7 @@ test('start runs only the bridge-defined command, with session markers removed f
 });
 
 test('start in a missing folder is refused', () => {
-  const t = new Terminal({ load: { ok: true, pty: fakePty, from: 'fake' }, cwd: os.tmpdir() });
+  const t = new Terminal({ load: { ok: true, pty: fakePty, from: 'fake' }, cwd: os.tmpdir(), command: (sid) => ({ file: 'claude', args: ['--session-id', sid] }) });
   assert.equal(t.start(path.join(os.tmpdir(), 'no-such-folder-office')), 'folder not found');
 });
 
@@ -167,4 +169,47 @@ test('the vendored node-pty loads on platforms with an upstream prebuild', { ski
 test('childEnv keeps user configuration and drops only session markers', () => {
   const e = childEnv({ CLAUDE_CONFIG_DIR: 'x', CLAUDE_CODE_USE_BEDROCK: '1', ANTHROPIC_MODEL: 'm', CLAUDE_CODE_ENTRYPOINT: 'cli', CLAUDE_PLUGIN_ROOT: 'p', AI_AGENT: 'a', PATH: 'p' });
   assert.deepEqual(Object.keys(e).sort(), ['ANTHROPIC_MODEL', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CONFIG_DIR', 'PATH']);
+});
+
+test('claude is resolved from absolute PATH entries only, never from the working folder', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'office-path-'));
+  const bin = path.join(base, 'bin');
+  const repo = path.join(base, 'repo');
+  fs.mkdirSync(bin);
+  fs.mkdirSync(repo);
+  fs.writeFileSync(path.join(bin, 'claude.cmd'), '@echo real');
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\necho real');
+  fs.chmodSync(path.join(bin, 'claude'), 0o755);
+  fs.writeFileSync(path.join(repo, 'claude.cmd'), '@echo HIJACK');
+  fs.writeFileSync(path.join(repo, 'claude'), '#!/bin/sh\necho HIJACK');
+  fs.chmodSync(path.join(repo, 'claude'), 0o755);
+  const prev = process.cwd();
+  process.chdir(repo);
+  try {
+    // "." and relative entries are skipped on both platforms; the shim in the working folder is never picked.
+    assert.equal(resolveClaude({ PATH: ['.', 'bin', bin].join(';'), PATHEXT: '.COM;.EXE;.BAT;.CMD' }, 'win32'), path.join(bin, 'claude.cmd'));
+    // (a Windows path contains ':' and cannot be put in a POSIX PATH; CI's Linux job runs this line)
+    if (process.platform !== 'win32') assert.equal(resolveClaude({ PATH: ['.', 'bin', bin].join(':') }, 'linux'), path.join(bin, 'claude'));
+    assert.equal(resolveClaude({ PATH: '.;bin', PATHEXT: '.CMD' }, 'win32'), undefined);
+    assert.equal(resolveClaude({ PATH: '' }, 'linux'), undefined);
+  } finally {
+    process.chdir(prev);
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+  // A missing claude makes the terminal unavailable instead of falling back to a PATH lookup at spawn time.
+  const term = new Terminal({ load: { ok: true, pty: fakePty, from: 'fake' }, cwd: os.tmpdir(), env: { PATH: '' } });
+  assert.equal(term.state.available, false);
+  assert.match(term.state.reason!, /claude/);
+  assert.equal(term.start(), term.state.reason);
+});
+
+test('the spawn spec quotes the absolute path and only adds --session-id', () => {
+  const sid = '123e4567-e89b-12d3-a456-426614174000';
+  assert.deepEqual(claudeCommand('/usr/local/bin/claude', sid, {}, 'linux'), { file: '/usr/local/bin/claude', args: ['--session-id', sid] });
+  assert.deepEqual(claudeCommand('C:\\Users\\u\\.local\\bin\\claude.exe', sid, {}, 'win32'), { file: 'C:\\Users\\u\\.local\\bin\\claude.exe', args: ['--session-id', sid] });
+  assert.deepEqual(claudeCommand('C:\\Program Files\\npm\\claude.cmd', sid, { ComSpec: 'C:\\Windows\\System32\\cmd.exe' }, 'win32'), {
+    file: 'C:\\Windows\\System32\\cmd.exe',
+    args: '/d /s /c ""C:\\Program Files\\npm\\claude.cmd" --session-id ' + sid + '"',
+  });
+  assert.throws(() => claudeCommand('/bin/claude', 'x; rm -rf /', {}, 'linux'));
 });

@@ -5,3 +5,4 @@ export * from './runtime-file.ts';
 export * from './receiver.ts';
 export * from './terminal.ts';
 export * from './child-env.ts';
+export * from './claude-path.ts';
