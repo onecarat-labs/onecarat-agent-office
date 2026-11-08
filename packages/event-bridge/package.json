@@ -1,0 +1,25 @@
+{
+  "name": "@onecarat/event-bridge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime-file": "./src/runtime-file.ts",
+    "./child-env": "./src/child-env.ts"
+  },
+  "bin": {
+    "onecarat-office-bridge": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts"
+  },
+  "dependencies": {
+    "@onecarat/adapter-claude-code": "*",
+    "@onecarat/domain": "*",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1"
+  }
+}

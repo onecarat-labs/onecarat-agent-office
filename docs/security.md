@@ -1,0 +1,54 @@
+# Security & privacy — Onecarat Agent Office CC
+
+## 1. What Office never does
+- **It never calls a model.** No Anthropic API, Agent SDK, `claude -p`, prompt/agent-type hooks. All model calls, sign-in and billing stay in the official Claude Code, so Office adds **no extra cost**. The one model-visible footprint is the plugin skill's short description, which, like any skill, sits in each session's context (measured ~143 tokens before shortening; the shortened description is estimated at a few dozen). The hooks themselves add no model context.
+- **It never reads, stores or forwards credentials.** It does not read `~/.claude/.credentials.json`, OAuth tokens, session cookies, API keys or `.env` files. The only file under the user's profile it reads or writes is its own runtime file (below).
+- **It never answers permission prompts and never types for you.** The built-in terminal runs the official interactive `claude`. Everything that reaches it comes from the user's own keystrokes in the Office tab. Office never writes to it on its own, never reads or parses its output, and never infers state from it. State still comes from hooks only.
+- **It never sends data off the machine.** No telemetry, analytics or cloud sync.
+- **It never edits `~/.claude/settings.json`.** The hooks come from the plugin and are removed with it.
+
+## 2. The main protection is that nothing is kept (masking only helps)
+Prompts, final replies, command snippets and **terminal output** are shown on screen. **They are held in memory only** and are **never written to disk** by Office. The terminal scrollback lives in the bridge (bounded, 512 KB) so that a reloaded tab can redraw. It is not put in `localStorage` or `sessionStorage`. Everything disappears when Office stops, or when the user clears the history in the UI (which also clears the terminal scrollback).
+
+Display masking hides some secret-looking strings in the office view: `*_KEY=…`, `token=…`, `Bearer …`, `user:pw@` in URLs, known key prefixes (`sk-`, `ghp_`, `AKIA` …), and long runs that mix letters and digits. It also hides the names of `.env`, credential and key files. **Masking is a best-effort extra, not a guarantee.** Short tokens, tokens split by separators, or secrets typed in plain words can pass through. **The terminal is not masked at all**: it shows exactly what `claude` prints, like any terminal. If a prompt contains a secret, assume it is visible on your own screen while Office runs. It is still not saved and not sent anywhere.
+
+## 3. Data minimization at the source
+The hook forwarder (`plugin/onecarat-agent-office/scripts/forward-lib.mjs`) keeps only the fields Office displays and clips them, all **before** anything leaves the hook process:
+- kept: event name, session/agent ids and type, cwd, prompt (≤4000 chars), final reply (≤4000), tool name, tool_use_id, duration, error line (≤600), notification type, and from `tool_input` only `file_path/path/pattern/command/url/query/description/subagent_type/message`
+- **dropped:** file contents (`content`, `old_string`, `new_string`, edits…), tool outputs (`tool_response`, except the Agent tool's `agentId`/`isAsync`), `transcript_path`, everything else
+
+## 4. One key is the only way in
+Each launch creates one random token (48 hex). It is required for every way into Office's data or controls: hook intake, the event stream, the terminal, clear and shutdown.
+
+| Control | How |
+|---|---|
+| Bind | `127.0.0.1` only (port 47821 by default) |
+| Hook intake `/hook` | token header, compared in constant time. **Requests with browser markers (`Origin`, `Sec-Fetch-*`) are refused** (CSRF). JSON only, 512 KB limit, answered before processing |
+| Event stream `/events`, `/api/clear`, `/api/shutdown` | token header required (401 without). Cross-site requests refused (`Sec-Fetch-Site` / `Origin`) |
+| Terminal WebSocket `/pty` | checked **before the WebSocket exists**: `Host` allowed, `Origin` exactly `http://127.0.0.1:<port>`, and the token, offered as a WebSocket subprotocol `office-token.<token>` (browsers cannot set WebSocket headers). The server answers only `office.v1`, so the token is not echoed back. 64 KB message limit |
+| `/api/health` | without the token it answers only "this is Office" (name, version, `authed:false`). No events, no counts, no terminal state |
+| How the page gets the key | the launcher opens `http://127.0.0.1:<port>/#t=<token>` **directly in the browser**. Browsers never send the URL fragment to a server, so the key is in no request line or access log. The page moves it out of the address bar at once (`history.replaceState`) and keeps it for that tab only (`sessionStorage`). On Windows the browser is opened through the URL protocol handler, because `explorer.exe` drops the fragment (measured) |
+| Never printed | the launcher and the bridge **never print the token**. The skill runs the launcher, and its output becomes part of the Claude Code transcript. A page opened by hand without the key shows "no access key" and no data |
+| What the terminal can run | only `claude`, with arguments fixed by the bridge (`--session-id <uuid>`). The UI cannot pass a program, arguments or environment. It can only pick the folder. The calling session's private variables (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_*`, `CLAUDECODE` …) are removed. The user's own configuration (`CLAUDE_CONFIG_DIR`, provider settings) is kept |
+| DNS rebinding | `Host` must be `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>` (else 421) |
+| Page | CSP `default-src 'self'` (no remote scripts), `connect-src 'self'`, `frame-ancestors 'none'`, `nosniff`, `no-referrer` |
+| Runtime file | `%LOCALAPPDATA%\onecarat-agent-office\bridge.json` (macOS: `~/Library/Application Support/…`, Linux: `$XDG_STATE_HOME/…`) holding port + token, created 0600, removed on stop |
+
+**Read this:** with the built-in terminal, **the token is a remote-control key for Claude Code on this computer.** Anyone who has it can type into the `claude` running in Office, and that `claude` can run commands with your permissions (subject to its own permission prompts and mode). Even on the same PC, a leaked token is a way in. Do not paste the tokened URL anywhere. Stopping Office makes the token useless (a new one is made at each launch).
+
+**Accepted limit:** any process running as the **same OS user** can read the runtime file. With the token it can post events, read the view, and type into the built-in terminal. Office does not defend against your own account's processes. That account can already run `claude` and read your files and transcripts. Office does defend against other users, web pages and other machines.
+
+## 5. Failure behavior (Claude Code is never blocked)
+- Hooks are `async: true` command hooks: Claude Code does not wait for them (measured: sync waited 2125 ms for a 2 s hook; async did not wait).
+- The forwarder always exits 0 with no output. If Office is not running it does not even open a connection, so no hook errors appear.
+- `onFailure: "block"` is never used.
+- If the built-in terminal cannot be used (no node-pty binary for this OS/CPU, e.g. Linux today), **Office starts read-only** and says why. Hooks, the office view and the event stream are unaffected.
+- Stopping Office ends a `claude` running in the built-in terminal (it is killed, so its `SessionEnd` hook may not fire).
+
+## 6. Supply chain
+- `dist/bridge.mjs`, `dist/office.mjs` and `dist/ui/` are bundled from this repository's `packages/` with esbuild/Vite. Bundled third-party code: `ws` (bridge), React and xterm.js (UI). **CI rebuilds them and fails if they differ from the committed files**, and the build fails if the bundled bridge does not start.
+- `dist/vendor/node-pty/` is **not built by us**. It is the published `node-pty@1.1.0` package (Microsoft, MIT, N-API prebuilds for win32-x64/arm64 and darwin-x64/arm64, debug symbols left out). **CI fetches the npm tarball, checks its sha512 against the pinned integrity, and fails unless every vendored file is byte-identical** (`scripts/vendor-node-pty.mjs --check`). No other native module may appear in `dist/` (the build fails).
+- No CDN or remote assets at run time.
+
+## 7. Reporting
+Please report security issues privately to the maintainers (see repository settings) rather than in public issues.

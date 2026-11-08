@@ -1,0 +1,700 @@
+{
+ "name": "office-demo",
+ "note": "Scripted demo replay. Not a real session.",
+ "durationMs": 36000,
+ "events": [
+  {
+   "at": 0,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "SessionStart",
+    "source": "startup"
+   }
+  },
+  {
+   "at": 1500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "Start the service and update the dashboard layout."
+   }
+  },
+  {
+   "at": 2600,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.tsx"
+    },
+    "tool_use_id": "toolu_demo_1"
+   }
+  },
+  {
+   "at": 3300,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.tsx"
+    },
+    "tool_use_id": "toolu_demo_1",
+    "tool_response": {},
+    "duration_ms": 700
+   }
+  },
+  {
+   "at": 4000,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Agent",
+    "tool_input": {
+     "description": "Research current layout",
+     "prompt": "(demo)",
+     "subagent_type": "researcher"
+    },
+    "tool_use_id": "toolu_demo_2"
+   }
+  },
+  {
+   "at": 4300,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStart",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher"
+   }
+  },
+  {
+   "at": 4400,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Agent",
+    "tool_input": {
+     "description": "Research current layout",
+     "prompt": "(demo)",
+     "subagent_type": "researcher"
+    },
+    "tool_use_id": "toolu_demo_2",
+    "tool_response": {
+     "isAsync": true,
+     "status": "async_launched",
+     "agentId": "demo-researcher"
+    }
+   }
+  },
+  {
+   "at": 5000,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Agent",
+    "tool_input": {
+     "description": "Update dashboard layout",
+     "prompt": "(demo)",
+     "subagent_type": "builder"
+    },
+    "tool_use_id": "toolu_demo_3"
+   }
+  },
+  {
+   "at": 5300,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStart",
+    "agent_id": "demo-builder",
+    "agent_type": "builder"
+   }
+  },
+  {
+   "at": 5400,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Agent",
+    "tool_input": {
+     "description": "Update dashboard layout",
+     "prompt": "(demo)",
+     "subagent_type": "builder"
+    },
+    "tool_use_id": "toolu_demo_3",
+    "tool_response": {
+     "isAsync": true,
+     "status": "async_launched",
+     "agentId": "demo-builder"
+    }
+   }
+  },
+  {
+   "at": 6000,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Agent",
+    "tool_input": {
+     "description": "Run checks",
+     "prompt": "(demo)",
+     "subagent_type": "tester"
+    },
+    "tool_use_id": "toolu_demo_4"
+   }
+  },
+  {
+   "at": 6300,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStart",
+    "agent_id": "demo-tester",
+    "agent_type": "tester"
+   }
+  },
+  {
+   "at": 6400,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "Agent",
+    "tool_input": {
+     "description": "Run checks",
+     "prompt": "(demo)",
+     "subagent_type": "tester"
+    },
+    "tool_use_id": "toolu_demo_4",
+    "tool_response": {
+     "isAsync": true,
+     "status": "async_launched",
+     "agentId": "demo-tester"
+    }
+   }
+  },
+  {
+   "at": 7200,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "last_assistant_message": "I delegated research, implementation, and testing. I will report back when they finish."
+   }
+  },
+  {
+   "at": 9000,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher",
+    "tool_name": "Glob",
+    "tool_input": {
+     "pattern": "src/**/*.tsx"
+    },
+    "tool_use_id": "toolu_demo_5"
+   }
+  },
+  {
+   "at": 9500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.tsx"
+    },
+    "tool_use_id": "toolu_demo_9"
+   }
+  },
+  {
+   "at": 10800,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher",
+    "tool_name": "Glob",
+    "tool_input": {
+     "pattern": "src/**/*.tsx"
+    },
+    "tool_use_id": "toolu_demo_5",
+    "tool_response": {},
+    "duration_ms": 1800
+   }
+  },
+  {
+   "at": 11100,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.tsx"
+    },
+    "tool_use_id": "toolu_demo_9",
+    "tool_response": {},
+    "duration_ms": 1600
+   }
+  },
+  {
+   "at": 11200,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.tsx"
+    },
+    "tool_use_id": "toolu_demo_6"
+   }
+  },
+  {
+   "at": 11800,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Edit",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.tsx",
+     "old_string": "(demo)",
+     "new_string": "(demo)"
+    },
+    "tool_use_id": "toolu_demo_10"
+   }
+  },
+  {
+   "at": 12500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-tester",
+    "agent_type": "tester",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "npm test"
+    },
+    "tool_use_id": "toolu_demo_14"
+   }
+  },
+  {
+   "at": 12700,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.tsx"
+    },
+    "tool_use_id": "toolu_demo_6",
+    "tool_response": {},
+    "duration_ms": 1500
+   }
+  },
+  {
+   "at": 13000,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher",
+    "tool_name": "Grep",
+    "tool_input": {
+     "pattern": "grid-template"
+    },
+    "tool_use_id": "toolu_demo_7"
+   }
+  },
+  {
+   "at": 14200,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Edit",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.tsx",
+     "old_string": "(demo)",
+     "new_string": "(demo)"
+    },
+    "tool_use_id": "toolu_demo_10",
+    "tool_response": {},
+    "duration_ms": 2400
+   }
+  },
+  {
+   "at": 14800,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher",
+    "tool_name": "Grep",
+    "tool_input": {
+     "pattern": "grid-template"
+    },
+    "tool_use_id": "toolu_demo_7",
+    "tool_response": {},
+    "duration_ms": 1800
+   }
+  },
+  {
+   "at": 14800,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Edit",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\layout.css",
+     "old_string": "(demo)",
+     "new_string": "(demo)"
+    },
+    "tool_use_id": "toolu_demo_11"
+   }
+  },
+  {
+   "at": 15500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher",
+    "tool_name": "SubagentHandback",
+    "tool_input": {
+     "message": "Dashboard uses a 3-column grid; the sidebar width is hard-coded."
+    },
+    "tool_use_id": "toolu_demo_8"
+   }
+  },
+  {
+   "at": 15500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUseFailure",
+    "agent_id": "demo-tester",
+    "agent_type": "tester",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "npm test"
+    },
+    "tool_use_id": "toolu_demo_14",
+    "error": "Exit code 1\n1 failing: Dashboard renders sidebar (expected 240px, got 200px)",
+    "is_interrupt": false,
+    "duration_ms": 3000
+   }
+  },
+  {
+   "at": 15900,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStop",
+    "agent_id": "demo-researcher",
+    "agent_type": "researcher",
+    "stop_hook_active": false,
+    "last_assistant_message": ""
+   }
+  },
+  {
+   "at": 16400,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "<agent-message from=\"demo-researcher\">\n[Subagent hand-back] Dashboard uses a 3-column grid; the sidebar width is hard-coded.\n</agent-message>"
+   }
+  },
+  {
+   "at": 16500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-tester",
+    "agent_type": "tester",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.test.tsx"
+    },
+    "tool_use_id": "toolu_demo_15"
+   }
+  },
+  {
+   "at": 16800,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Edit",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\layout.css",
+     "old_string": "(demo)",
+     "new_string": "(demo)"
+    },
+    "tool_use_id": "toolu_demo_11",
+    "tool_response": {},
+    "duration_ms": 2000
+   }
+  },
+  {
+   "at": 17500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "npm run dev -- --port 5180"
+    },
+    "tool_use_id": "toolu_demo_12"
+   }
+  },
+  {
+   "at": 17600,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PermissionRequest",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "npm run dev -- --port 5180"
+    }
+   }
+  },
+  {
+   "at": 17700,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "Notification",
+    "notification_type": "permission_prompt",
+    "message": "Claude needs your permission to use Bash"
+   }
+  },
+  {
+   "at": 17700,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "demo-tester",
+    "agent_type": "tester",
+    "tool_name": "Read",
+    "tool_input": {
+     "file_path": "C:\\demo\\dashboard-app\\src\\Dashboard.test.tsx"
+    },
+    "tool_use_id": "toolu_demo_15",
+    "tool_response": {},
+    "duration_ms": 1200
+   }
+  },
+  {
+   "at": 19000,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-tester",
+    "agent_type": "tester",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "npm test -- Dashboard"
+    },
+    "tool_use_id": "toolu_demo_16"
+   }
+  },
+  {
+   "at": 22500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUseFailure",
+    "agent_id": "demo-tester",
+    "agent_type": "tester",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "npm test -- Dashboard"
+    },
+    "tool_use_id": "toolu_demo_16",
+    "error": "Exit code 1\n1 failing: Dashboard renders sidebar (expected 240px, got 200px)",
+    "is_interrupt": false,
+    "duration_ms": 3500
+   }
+  },
+  {
+   "at": 23500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PostToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "Bash",
+    "tool_input": {
+     "command": "npm run dev -- --port 5180"
+    },
+    "tool_use_id": "toolu_demo_12",
+    "tool_response": {},
+    "duration_ms": 1200
+   }
+  },
+  {
+   "at": 25500,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "tool_name": "SubagentHandback",
+    "tool_input": {
+     "message": "Layout updated: sidebar is now resizable; dev server running on :5180."
+    },
+    "tool_use_id": "toolu_demo_13"
+   }
+  },
+  {
+   "at": 25900,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStop",
+    "agent_id": "demo-builder",
+    "agent_type": "builder",
+    "stop_hook_active": false,
+    "last_assistant_message": ""
+   }
+  },
+  {
+   "at": 26400,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "<agent-message from=\"demo-builder\">\n[Subagent hand-back] Layout updated: sidebar is now resizable; dev server running on :5180.\n</agent-message>"
+   }
+  },
+  {
+   "at": 28000,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "SubagentStop",
+    "agent_id": "demo-tester",
+    "agent_type": "tester",
+    "stop_hook_active": false,
+    "last_assistant_message": ""
+   }
+  },
+  {
+   "at": 28600,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "<agent-message from=\"demo-tester\">\n[Subagent hand-back] Stopped: 1 test still failing (sidebar width).\n</agent-message>"
+   }
+  },
+  {
+   "at": 31000,
+   "hook": {
+    "session_id": "demo-session-0001",
+    "cwd": "C:\\demo\\dashboard-app",
+    "permission_mode": "default",
+    "hook_event_name": "Stop",
+    "stop_hook_active": false,
+    "last_assistant_message": "Layout is updated and the dev server is running. One test still fails (sidebar width 200px vs 240px) — should I update the test or the layout?"
+   }
+  }
+ ]
+}

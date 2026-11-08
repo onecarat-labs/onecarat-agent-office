@@ -1,0 +1,7 @@
+node_modules/
+packages/*/dist/
+*.log
+.claude/settings.local.json
+# Windows reserved name created by a stray redirect
+nul
+tests/screenshots/out/

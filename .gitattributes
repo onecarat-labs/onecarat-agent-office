@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.png binary
+# Generated, byte-for-byte checked by CI against a fresh build.
+plugin/onecarat-agent-office/dist/** -text

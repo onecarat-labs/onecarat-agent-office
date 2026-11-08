@@ -1,0 +1,1 @@
+{ "name": "@onecarat/adapter-claude-code", "version": "0.0.0", "private": true, "type": "module", "exports": { ".": "./src/index.ts" }, "dependencies": { "@onecarat/domain": "*" } }

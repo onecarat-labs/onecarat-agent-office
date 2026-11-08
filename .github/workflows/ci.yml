@@ -1,0 +1,43 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+  dist-matches-source:
+    # The plugin ships pre-built JS. This job rebuilds it and fails if the committed files differ,
+    # so anyone can verify that plugin/onecarat-agent-office/dist is exactly what the public source produces.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:plugin
+      - run: git status --porcelain -- plugin/onecarat-agent-office/dist
+      - run: git diff --exit-code -- plugin/onecarat-agent-office/dist && test -z "$(git status --porcelain -- plugin/onecarat-agent-office/dist)"
+  vendor-matches-upstream:
+    # dist/vendor/node-pty is not built by us: every file must be byte-identical to the published
+    # node-pty@1.1.0 npm tarball, whose sha512 must match the pinned integrity (scripts/vendor-node-pty.mjs).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/vendor-node-pty.mjs --check

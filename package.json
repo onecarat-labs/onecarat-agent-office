@@ -1,0 +1,30 @@
+{
+  "name": "onecarat-agent-office",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Onecarat Agent Office CC - a visual companion for Claude Code (local only)",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test \"packages/*/test/*.test.ts\"",
+    "typecheck": "tsc -p packages/domain && tsc -p packages/adapter-claude-code && tsc -p packages/event-bridge && tsc -p packages/office-ui --noEmit && tsc -p packages/launcher",
+    "dev": "npm run dev -w @onecarat/office-ui",
+    "build": "npm run build -w @onecarat/office-ui",
+    "bridge": "node packages/event-bridge/src/main.ts",
+    "start": "npm run build && node packages/event-bridge/src/main.ts --open",
+    "build:plugin": "node scripts/build-plugin.mjs",
+    "vendor:node-pty": "node scripts/vendor-node-pty.mjs",
+    "vendor:check": "node scripts/vendor-node-pty.mjs --check"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.65.0",
+    "typescript": "^7.0.2"
+  }
+}
