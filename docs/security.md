@@ -18,7 +18,7 @@ The hook forwarder (`plugin/onecarat-agent-office/scripts/forward-lib.mjs`) keep
 - **dropped:** file contents (`content`, `old_string`, `new_string`, edits…), tool outputs (`tool_response`, except the Agent tool's `agentId`/`isAsync`), `transcript_path`, everything else
 
 ## 4. One key is the only way in
-Each launch creates one random token (48 hex). It is required for every way into Office's data or controls: hook intake, the event stream, the terminal, clear and shutdown.
+Each launch creates one random token (48 hex; the README calls it the *access key*). It is required for every way into Office's data or controls: hook intake, the event stream, the terminal, clear and shutdown.
 
 | Control | How |
 |---|---|
@@ -54,4 +54,4 @@ Each launch creates one random token (48 hex). It is required for every way into
 - No CDN or remote assets at run time.
 
 ## 7. Reporting
-Please report security issues privately to the maintainers (see repository settings) rather than in public issues.
+Please report security issues privately: on GitHub, open this repository's **Security** tab and choose **Report a vulnerability** (private vulnerability reporting). Please do not open a public issue for a security problem. See also [SECURITY.md](../SECURITY.md).

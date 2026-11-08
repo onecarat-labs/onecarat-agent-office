@@ -2,10 +2,14 @@
 
 English | [日本語](README.ja.md)
 
+> Early release (v0.2.x). Verified on Windows 11 with Claude Code 2.1.319.
+
 **A companion app that turns Claude Code's work into a small office you can watch in your browser.**
 The manager (main agent) and the subagents Claude Code **actually starts** appear as stick figures that research, edit and test at their desks, then report back. The chat panel is a **built-in terminal running the real interactive Claude Code**, so you can ask and watch on one screen.
 
 ![Office screen](assets/screenshot.png)
+
+**What you need to know first.** Claude Code is Anthropic's AI coding tool that runs in a terminal. Office does not replace it; it runs beside it, so Claude Code must be installed and signed in. While working, Claude Code sometimes hands parts of a job to helper agents (*subagents*); the extra figures in the office are those.
 
 ## Install (2 commands)
 
@@ -16,7 +20,7 @@ claude plugin marketplace add onecarat-labs/onecarat-agent-office
 claude plugin install onecarat-agent-office@onecarat
 ```
 
-Then ask Claude Code (or the Desktop app):
+Then ask Claude Code (in the terminal, or in Claude Code's Desktop app):
 
 ```
 Start Onecarat Agent Office
@@ -29,10 +33,10 @@ or type `/onecarat-agent-office:office start`. Your browser opens http://127.0.0
 | | |
 |---|---|
 | **Node.js** | **18 or newer, required.** It is separate from Claude Code itself. If missing, install the LTS from https://nodejs.org/ (Windows: `winget install OpenJS.NodeJS.LTS`) and restart Claude Code / the Desktop app. |
-| Claude Code | 2.1.139 or newer (tested on 2.1.319 only) |
+| Claude Code | 2.1.139 or newer (tested on 2.1.319 only), **installed and signed in**. Office has no account of its own: it uses your Claude Code as it is, and adds no usage or cost |
 | OS | **Tested on Windows 11.** macOS / Linux are designed for but not guaranteed until tested. The built-in terminal ships for Windows (x64/arm64) and macOS; on Linux Office runs read-only for now (use Claude Code in your own terminal). |
 
-Installing the plugin without Node.js does not break Claude Code (the hooks run in the background, so no errors show in the normal view). When you start Office, the skill tells you how to install Node.js.
+Installing the plugin without Node.js does not break Claude Code: the hooks are background hooks, so they are only recorded as failed and never block a session. When you start Office, the skill tells you how to install Node.js.
 
 ## Use
 
@@ -83,7 +87,7 @@ claude plugin uninstall onecarat-agent-office@onecarat
 claude plugin marketplace remove onecarat
 ```
 
-Office never edits `~/.claude/settings.json` directly; removing the plugin removes its hooks. The only file it creates is `%LOCALAPPDATA%\onecarat-agent-office\bridge.json` (port + per-launch token) while it runs; it is deleted on stop.
+Office never edits `~/.claude/settings.json` directly; removing the plugin removes its hooks. The only file it creates is `%LOCALAPPDATA%\onecarat-agent-office\bridge.json` (port + per-launch access key) while it runs; it is deleted on stop.
 
 ## Troubleshooting
 
@@ -91,7 +95,7 @@ Office never edits `~/.claude/settings.json` directly; removing the plugin remov
 |---|---|
 | "Node.js is required" | Install Node.js 18+, restart Claude Code |
 | Port 47821 in use | `/onecarat-agent-office:office start --port 47822` |
-| Nothing shows up | `/onecarat-agent-office:office status`; check `claude plugin list`; new sessions appear once the plugin is enabled |
+| Nothing shows up | Sessions started before the plugin was installed are not shown: start a new session. Then check `/onecarat-agent-office:office status` and `claude plugin list` |
 | Cannot start after a crash | `/onecarat-agent-office:office stop`, then `start` |
 | "No access key" in the page | You opened the URL by hand. Ask "Open Onecarat Agent Office" or run `/onecarat-agent-office:office open` |
 | "Built-in terminal is not available" | No node-pty binary for this OS/CPU (Linux today), or no `claude` on PATH (`/onecarat-agent-office:office check` prints which). Office still shows everything; use Claude Code in your own terminal |
@@ -108,6 +112,8 @@ npm run dev                                                # (with the line abov
 npm run build:plugin  # regenerate plugin/onecarat-agent-office/dist (CI checks it matches the source)
 npm run vendor:check  # dist/vendor/node-pty must equal the upstream npm tarball (CI too)
 ```
+
+Directories: `packages/domain` (shared model), `packages/adapter-claude-code` (hook normalization), `packages/event-bridge`, `packages/office-ui`, `packages/launcher`, `plugin/onecarat-agent-office` (what is shipped), `docs/` (architecture, security, event support matrix, test plan).
 
 ## License
 

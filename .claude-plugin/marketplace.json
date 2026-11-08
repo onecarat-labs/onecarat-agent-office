@@ -6,7 +6,7 @@
     {
       "name": "onecarat-agent-office",
       "source": "./plugin/onecarat-agent-office",
-      "description": "Watch Claude Code and its real subagents work in a small office in your browser (local, read-only)."
+      "description": "Watch Claude Code and its real subagents work in a small office in your browser (local; no extra model usage)."
     }
   ]
 }
