@@ -4,13 +4,14 @@ import { useLiveFeed } from './live/useLiveFeed.ts';
 import { useTerminal } from './live/useTerminal.ts';
 import { authHeaders } from './live/token.ts';
 import { Stage, useStageKeyboard } from './office/Stage.tsx';
-import { ChatPanel, ConsolePanel } from './panels.tsx';
+import { ConsolePanel, MaxToggle, TerminalPanel } from './panels.tsx';
 import { useDemoPlayer } from './demo/useDemoPlayer.ts';
 import { IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
 import { detectLang, dict, type Lang } from './i18n.ts';
 
 type Theme = 'system' | 'light' | 'dark';
 type Motion = 'system' | 'reduce' | 'full';
+type Pane = 'stage' | 'terminal' | 'console';
 
 function load<T extends string>(key: string, fallback: T): T {
   try {
@@ -56,6 +57,9 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(() => load<Theme>('office.theme', 'system'));
   const [motionPref, setMotionPref] = useState<Motion>(() => load<Motion>('office.motion', 'system'));
   const [popover, setPopover] = useState<'none' | 'settings' | 'sessions'>('none');
+  // One pane may fill the main area. Hidden panes stay mounted (the terminal keeps its session).
+  const [maxPane, setMaxPane] = useState<Pane | undefined>(undefined);
+  const toggleMax = (p: Pane) => setMaxPane((cur) => (cur === p ? undefined : p));
   const sysReduced = useSystemReducedMotion();
   const motion = motionPref === 'full' ? true : motionPref === 'reduce' ? false : !sysReduced;
   const t = dict[lang];
@@ -186,16 +190,17 @@ export function App() {
         </div>
       ) : null}
 
-      <main className="main">
+      <main className={`main${maxPane ? ` max-${maxPane}` : ''}`}>
         <div className="stage" onKeyDown={onStageKey}>
+          <MaxToggle on={maxPane === 'stage'} onToggle={() => toggleMax('stage')} lang={lang} className="stage-max" />
           <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onSelect} motion={motion} lang={lang} demo={isDemo} /></div>
           {isDemo ? <div className="demo-ribbon">{t.demoRibbon}</div> : null}
           {!isDemo && live.status === 'locked' ? <div className="live-waiting">{t.locked}</div> : null}
           {!isDemo && live.status !== 'locked' && !session ? <div className="live-waiting">{t.liveWaiting}</div> : null}
         </div>
         <div className="bottom">
-          <ChatPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} />
-          <ConsolePanel session={session} selectedId={selectedId} onSelect={onSelect} lang={lang} />
+          <TerminalPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} />
+          <ConsolePanel session={session} selectedId={selectedId} onSelect={onSelect} lang={lang} max={maxPane === 'console'} onMax={() => toggleMax('console')} />
         </div>
       </main>
     </div>

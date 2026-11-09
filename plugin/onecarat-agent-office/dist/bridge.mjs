@@ -4481,7 +4481,7 @@ var Terminal = class {
 };
 
 // packages/event-bridge/src/main.ts
-var VERSION = "0.2.1";
+var VERSION = "0.2.2";
 var DEFAULT_PORT = 47821;
 var args = process.argv.slice(2);
 var flag = (name) => args.includes(`--${name}`);
