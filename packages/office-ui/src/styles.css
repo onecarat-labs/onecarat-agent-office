@@ -1,6 +1,7 @@
 /* Onecarat brand tokens. Only listed tokens + alpha/derived tones of them. */
 :root {
   --accent: #0284c7;
+  --brand-labs: #0d9488; /* Editor Core brand teal; sign text is large (34px bold), 3:1 is enough */
   --accent-soft: rgb(2 132 199 / 0.1);
   --accent-line: rgb(2 132 199 / 0.35);
   --success: #059669; /* semantic success (emerald, same Tailwind family as the other tokens); marks */
@@ -36,6 +37,7 @@
 /* Dark: OS-following unless the user forced light; forced dark via data-theme. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
+    --brand-labs: #2dd4bf;
     --accent: #38bdf8; /* brighter tone of the accent hue; 7.9:1 on #1e293b */
     --accent-soft: rgb(56 189 248 / 0.12);
     --accent-line: rgb(56 189 248 / 0.4);
@@ -64,6 +66,7 @@
 }
 :root[data-theme='dark'] {
   --success-text: #34d399;
+  --brand-labs: #2dd4bf;
   --accent: #38bdf8;
   --accent-soft: rgb(56 189 248 / 0.12);
   --accent-line: rgb(56 189 248 / 0.4);
@@ -121,6 +124,18 @@ button { font: inherit; color: inherit; }
 .panel-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 15px; }
 .panel-head .sub { font-weight: 400; color: var(--muted); font-size: 12.5px; margin-left: auto; }
 
+/* ---------- Maximize / restore ---------- */
+.maxbtn { width: 28px; height: 28px; margin: -4px -6px -4px auto; flex: none; }
+.panel-head .tabs + .maxbtn, .panel-head .sub + .maxbtn { margin-left: 0; }
+.stage-max { position: absolute; top: 8px; right: 8px; z-index: 2; margin: 0; background: var(--panel); border-color: var(--border); }
+/* Classes beat the plain .main rules, so this also holds on narrow screens. Hidden panes stay mounted. */
+.main.max-stage, .main.max-terminal, .main.max-console { grid-template-rows: minmax(0, 1fr); }
+.main.max-stage .bottom { display: none; }
+.main.max-terminal .stage, .main.max-console .stage { display: none; }
+.main.max-terminal .bottom, .main.max-console .bottom { grid-template-columns: minmax(0, 1fr); }
+.main.max-terminal .bottom > .panel:last-child, .main.max-console .bottom > .panel:first-child { display: none; }
+.main.max-terminal .bottom .panel, .main.max-console .bottom .panel { min-height: 0; }
+
 /* ---------- Stage ---------- */
 .stage { position: relative; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-height: 0; }
 .stage-scroll { width: 100%; height: 100%; }
@@ -159,6 +174,9 @@ button { font: inherit; color: inherit; }
 .sweat-drop { animation: drip 1.6s ease-in infinite; }
 .sparkle { animation: spark .9s ease-in-out infinite; }
 .spinner { animation: spin 1.4s linear infinite; transform-box: fill-box; transform-origin: center; }
+/* leaving the office: a short bow from the hip (figure coords: hip at 0,-50) */
+@keyframes bow { 0%,100% { transform: rotate(0deg); } 30%,65% { transform: rotate(26deg); } }
+.bowing { animation: bow 1.4s ease-in-out forwards; transform-box: view-box; transform-origin: 0 -50px; }
 
 .bubble rect { stroke-width: 2; }
 .bubble text { font: 600 17px var(--font); }
@@ -198,6 +216,7 @@ button { font: inherit; color: inherit; }
 .board-row { font: 15.5px var(--font); fill: var(--text); }
 .board-empty { font: 14px var(--font); fill: var(--muted); }
 .stage-logo { font: 700 34px var(--font); fill: var(--text); }
+.stage-logo-labs { fill: var(--brand-labs); }
 .status-text { font: 600 17px var(--font); fill: var(--text); }
 .busybar-track { fill: var(--border); }
 .busybar-fill { fill: var(--accent); }

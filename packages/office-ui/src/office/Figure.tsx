@@ -1,6 +1,7 @@
 import type { Face, Pose } from '@onecarat/domain';
 
-export type FigurePose = Pose | 'highfive';
+/** 'bow' and 'wave' are stage-only choreography poses (leaving the office), never derived from events. */
+export type FigurePose = Pose | 'highfive' | 'bow' | 'wave';
 
 export interface FigureProps {
   pose: FigurePose;
@@ -37,18 +38,24 @@ export function Figure({ pose, face, sweat, walking, motion, facing, manager }: 
           {walking ? sw('0.52s', `-20 ${HIP.x} ${HIP.y};20 ${HIP.x} ${HIP.y};-20 ${HIP.x} ${HIP.y}`) : null}
           <polyline className="line" points={pts([HIP.x, HIP.y], [14, -24], [18, 0])} />
         </g>
-        {/* body */}
-        <line className="line" x1={0} y1={-122} x2={HIP.x} y2={HIP.y} />
-        {manager ? <path className="tie" d="M0 -118 l-5 8 l5 26 l5 -26 Z" /> : null}
-        <Arms pose={walking ? 'walk' : pose} typing={typing} motion={motion} />
-        <Head face={face} />
-        {sweat ? (
-          <g>
-            {motion ? <animateTransform attributeName="transform" type="translate" dur="1.6s" values="0 0;0 10;0 0" repeatCount="indefinite" /> : null}
-            <path className="sweat" d="M36 -178 q-7 10 0 14 q7 -4 0 -14Z" />
-            <path className="sweat" d="M45 -164 q-5 7 0 10 q5 -3 0 -10Z" opacity={0.7} />
-          </g>
-        ) : null}
+        {/* upper body: tilts forward from the hip for a bow (CSS animation; a static tilt under reduced motion) */}
+        <g
+          className={pose === 'bow' && motion ? 'bowing' : undefined}
+          transform={pose === 'bow' && !motion ? `rotate(24 ${HIP.x} ${HIP.y})` : undefined}
+        >
+          {/* body */}
+          <line className="line" x1={0} y1={-122} x2={HIP.x} y2={HIP.y} />
+          {manager ? <path className="tie" d="M0 -118 l-5 8 l5 26 l5 -26 Z" /> : null}
+          <Arms pose={walking ? 'walk' : pose} typing={typing} motion={motion} />
+          <Head face={face} />
+          {sweat ? (
+            <g>
+              {motion ? <animateTransform attributeName="transform" type="translate" dur="1.6s" values="0 0;0 10;0 0" repeatCount="indefinite" /> : null}
+              <path className="sweat" d="M36 -178 q-7 10 0 14 q7 -4 0 -14Z" />
+              <path className="sweat" d="M45 -164 q-5 7 0 10 q5 -3 0 -10Z" opacity={0.7} />
+            </g>
+          ) : null}
+        </g>
       </g>
     </g>
   );
@@ -97,6 +104,29 @@ function Arms({ pose, typing, motion }: { pose: FigurePose | 'walk'; typing: boo
           <circle cx={46} cy={-186} r={6} className="head" />
         </>
       );
+    case 'bow':
+      // hands together in front
+      return (
+        <>
+          <polyline className="line" points={pts([S.x, S.y], [-6, -84], [8, -64])} />
+          <polyline className="line" points={pts([S.x, S.y], [10, -84], [12, -62])} />
+        </>
+      );
+    case 'wave': {
+      // a casual raised hand ("hey"), swinging from the elbow
+      const E = { x: 30, y: -134 };
+      return (
+        <>
+          <polyline className="line" points={pts([S.x, S.y], [-18, -84], [-22, -62])} />
+          <polyline className="line" points={pts([S.x, S.y], [E.x, E.y])} />
+          <g>
+            {motion ? <animateTransform attributeName="transform" type="rotate" dur="0.7s" values={`-18 ${E.x} ${E.y};16 ${E.x} ${E.y};-18 ${E.x} ${E.y}`} repeatCount="indefinite" /> : null}
+            <polyline className="line" points={pts([E.x, E.y], [36, -172])} />
+            <circle cx={37} cy={-178} r={6} className="head" />
+          </g>
+        </>
+      );
+    }
     case 'wait':
       return (
         <>

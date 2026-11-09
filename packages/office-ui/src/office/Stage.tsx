@@ -12,7 +12,15 @@ const REPORT_X = 462;
 const SPAWN_X = 470;
 const WALK_SPEED = 0.32; // units per ms
 
-type Phase = 'arrive' | 'toDesk' | 'atDesk' | 'toManager' | 'atManager' | 'highfive' | 'back' | 'done';
+/** A finished subagent stays at its desk this long, then stands up, bows to the manager and leaves. */
+const LINGER_MS = 10_000;
+/** A subagent that was already finished this long before we first saw it (page reload, session switch) is not shown. */
+const STALE_MS = 15_000;
+
+type Phase =
+  | 'arrive' | 'toDesk' | 'atDesk' | 'toManager' | 'atManager' | 'highfive' | 'back' | 'done'
+  // leaving (visual only): step out from the desk, walk to the door by the manager, bow, fade out
+  | 'standUp' | 'leave' | 'bow' | 'fade' | 'gone';
 interface Choreo { phase: Phase; since: number; dur: number; from: number }
 
 export interface StageProps {
@@ -37,11 +45,13 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
   const t = dict[lang];
   const order = session?.order ?? [];
   const agents = session?.agents ?? {};
-  const { xs, deskW } = slotXs(order.length);
-  const slotOf = (id: string) => xs[order.indexOf(id)] ?? 1200;
 
-  // ---- choreography: walking to desks, reporting, high-five (visual only) ----
+  // ---- choreography: walking to desks, reporting, high-five, leaving (visual only) ----
   const [choreo, setChoreo] = useState<Record<string, Choreo>>({});
+  // Subagents still in the office. Those who went home free their desk (the session state keeps them).
+  const onStage = order.filter((id) => choreo[id]?.phase !== 'gone');
+  const { xs, deskW } = slotXs(onStage.length);
+  const slotOf = (id: string) => xs[onStage.indexOf(id)] ?? 1200;
   const [, setTick] = useState(0);
   const agentsRef = useRef(agents);
   agentsRef.current = agents;
@@ -66,7 +76,8 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
           const desk = slotOf(id);
           const finished = a.status === 'completed' || a.status === 'failed';
           if (!c) {
-            set(id, 'arrive', motion ? 700 : 0);
+            if (finished && now - a.updatedAt > STALE_MS) set(id, 'gone');
+            else set(id, 'arrive', motion ? 700 : 0);
             continue;
           }
           const elapsed = now - c.since;
@@ -84,6 +95,11 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
             }
             case 'highfive': set(id, 'back', walkDur(desk - REPORT_X), REPORT_X); break;
             case 'back': set(id, 'done'); break;
+            case 'done': if (finished && elapsed >= LINGER_MS) set(id, 'standUp', motion ? 400 : 0); break;
+            case 'standUp': set(id, 'leave', walkDur(desk - REPORT_X), desk); break;
+            case 'leave': set(id, 'bow', motion ? 1600 : 1200); break;
+            case 'bow': set(id, 'fade', motion ? 600 : 0); break;
+            case 'fade': set(id, 'gone'); break;
             default: break;
           }
         }
@@ -95,15 +111,16 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [order.join('|'), motion, xs.join('|')]);
 
-  const highfiving = order.some((id) => choreo[id]?.phase === 'highfive');
+  const highfiving = onStage.some((id) => choreo[id]?.phase === 'highfive');
+  const bowing = onStage.some((id) => choreo[id]?.phase === 'bow');
   const summary = session ? summarize(session) : { active: 0, completed: 0, failed: 0 };
 
   // Position of each subagent figure for its phase.
-  const placed = order.map((id, idx) => {
+  const placed = onStage.map((id, idx) => {
     const a = agents[id]!;
     const c = choreo[id];
     const desk = xs[idx]!;
-    const reporters = order.filter((o) => ['toManager', 'atManager', 'highfive'].includes(choreo[o]?.phase ?? ''));
+    const reporters = onStage.filter((o) => ['toManager', 'atManager', 'highfive', 'leave', 'bow', 'fade'].includes(choreo[o]?.phase ?? ''));
     const qx = REPORT_X + Math.max(0, reporters.indexOf(id)) * 70;
     let x = desk;
     let y = DESK_FIG_Y;
@@ -119,6 +136,10 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
       case 'atManager':
       case 'highfive': x = qx; y = AISLE_Y; front = true; facing = -1; break;
       case 'back': x = desk; y = AISLE_Y; front = true; walking = c.dur > 0; dur = c.dur; break;
+      case 'standUp': x = desk; y = AISLE_Y; front = true; dur = c.dur; break;
+      case 'leave': x = qx; y = AISLE_Y; front = true; walking = c.dur > 0; facing = -1; dur = c.dur; break;
+      case 'bow':
+      case 'fade': x = qx; y = AISLE_Y; front = true; facing = -1; break;
       default: break;
     }
     return { id, a, x, y, front, walking, facing, dur, phase: c?.phase };
@@ -135,11 +156,18 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
     if (p.phase === 'atManager') { pose = p.a.status === 'failed' ? 'stand' : 'report'; }
     if ((p.phase === 'done' || p.phase === 'atDesk') && (p.a.status === 'completed' || p.a.status === 'failed')) { pose = 'stand'; }
     if (p.phase === 'toDesk' && !p.walking) pose = 'stand';
+    const leaving = p.phase === 'standUp' || p.phase === 'leave' || p.phase === 'bow' || p.phase === 'fade';
+    if (leaving) { bubble = undefined; face = 'smile'; pose = 'stand'; }
+    if (p.phase === 'bow' || p.phase === 'fade') pose = 'bow';
+    const fading = p.phase === 'fade';
     return (
       <g
         key={p.id}
         className="mover"
-        style={{ transform: `translate(${p.x}px, ${p.y}px)`, transitionDuration: `${p.dur}ms` }}
+        style={{
+          transform: `translate(${p.x}px, ${p.y}px)`,
+          ...(fading ? { opacity: 0, transition: `opacity ${motion ? 600 : 0}ms ease-out` } : { transitionDuration: `${p.dur}ms` }),
+        }}
       >
         <FigureButton
           agent={p.a}
@@ -174,11 +202,8 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
       {[300, 840, 1180].map((x) => (<rect key={x} x={x} y={0} width={10} height={300} className="skyline" />))}
       <rect className="floor" x={0} y={300} width={W} height={H - 300} />
 
-      {/* logo (provisional) */}
-      <g transform="translate(40,34)">
-        <path d="M2 40 14 6h9L11 40Z M19 40 31 6h9L28 40Z" fill="var(--accent)" />
-        <text x={52} y={36} className="stage-logo">Onecarat</text>
-      </g>
+      {/* logo sign */}
+      <text x={38} y={70} className="stage-logo">Onecarat <tspan className="stage-logo-labs">Labs</tspan></text>
 
       {/* plant */}
       <g transform="translate(110,300)">
@@ -201,13 +226,13 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
             selected={selectedId === MANAGER_ID}
             onSelect={onSelect}
             lang={lang}
-            pose={highfiving ? 'highfive' : mgrExpr.pose}
-            face={highfiving ? 'happy' : mgrExpr.face}
-            sweat={mgrExpr.sweat}
+            pose={highfiving ? 'highfive' : bowing ? 'wave' : mgrExpr.pose}
+            face={highfiving ? 'happy' : bowing ? 'smile' : mgrExpr.face}
+            sweat={mgrExpr.sweat && !bowing}
             walking={false}
             motion={motion}
             facing={1}
-            bubble={highfiving ? undefined : mgrExpr.bubble}
+            bubble={highfiving || bowing ? undefined : mgrExpr.bubble}
             busy={mgrExpr.busy}
             manager
             sparkle={false}
@@ -217,7 +242,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
       <DeskFront x={MGR_X} w={250} label={t.manager} manager />
 
       {/* subagent desks with seated figures */}
-      {order.map((id, i) => (
+      {onStage.map((id, i) => (
         <g key={`desk-${id}`}>
           {i > 0 ? <path className="partition" d={`M${xs[i]! - (xs[1]! - xs[0]!) / 2 - 6} 410 l0 -110 l14 -14 l0 110Z`} /> : null}
           <DeskBack x={xs[i]!} w={deskW} />
@@ -235,7 +260,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
         </g>
       ) : null}
 
-      {order.length === 0 ? (
+      {onStage.length === 0 ? (
         <text x={1080} y={360} textAnchor="middle" className="board-empty">{t.agentsNone}</text>
       ) : null}
     </svg>

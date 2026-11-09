@@ -2,29 +2,45 @@ import { useEffect, useRef, useState } from 'react';
 import { TerminalView } from './TerminalView.tsx';
 import type { TerminalLink } from './live/useTerminal.ts';
 import { MANAGER_ID, type AgentState, type SessionState } from '@onecarat/domain';
-import { IconChat, IconConsole, IconSend, IconSmile, IconUser } from './icons.tsx';
+import { IconChat, IconConsole, IconMaximize, IconRestore, IconSend, IconSmile, IconTerminal, IconUser } from './icons.tsx';
 import { dict, displayName, modeText, outcomeText, statusText, bubbleText, type Lang } from './i18n.ts';
 import { expressionOf } from '@onecarat/domain';
 
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const hhmmss = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
-export function ChatPanel({ session, lang, term, cwds, termMode }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string }) {
+/** Maximize / restore toggle shown in each pane's header. */
+export function MaxToggle({ on, onToggle, lang, className = '' }: { on: boolean; onToggle: () => void; lang: Lang; className?: string }) {
+  const t = dict[lang];
+  const label = on ? t.restore : t.maximize;
+  return (
+    <button className={`iconbtn maxbtn ${className}`} aria-pressed={on} aria-label={label} title={label} onClick={onToggle}>
+      {on ? <IconRestore size={18} /> : <IconMaximize size={18} />}
+    </button>
+  );
+}
+
+type MaxProps = { max: boolean; onMax: () => void };
+
+export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string } & MaxProps) {
   const t = dict[lang];
   const termOk = !!term && term.state?.available !== false;
   const [tab, setTab] = useState<'terminal' | 'history'>('terminal');
   const showTerm = termOk && tab === 'terminal';
+  // Without the built-in terminal (demo, or not available here) the pane only shows the conversation.
+  const title = termOk ? t.terminal : t.conversation;
   return (
     <section className="panel" aria-labelledby="chat-h">
       <div className="panel-head">
-        <IconChat size={22} />
-        <span id="chat-h">{t.chat}</span>
+        {termOk ? <IconTerminal size={22} /> : <IconChat size={22} />}
+        <span id="chat-h">{title}</span>
         {termOk ? (
-          <div className="tabs" role="tablist" aria-label={t.chat}>
+          <div className="tabs" role="tablist" aria-label={title}>
             <button role="tab" aria-selected={tab === 'terminal'} onClick={() => setTab('terminal')}>{t.termTab}</button>
             <button role="tab" aria-selected={tab === 'history'} onClick={() => setTab('history')}>{t.historyTab}</button>
           </div>
         ) : null}
+        <MaxToggle on={max} onToggle={onMax} lang={lang} />
       </div>
       {showTerm ? <TerminalPane term={term!} lang={lang} cwds={cwds} mode={termMode} /> : <HistoryPane session={session} lang={lang} term={term} />}
     </section>
@@ -72,7 +88,7 @@ function TerminalPane({ term, lang, cwds, mode }: { term: TerminalLink; lang: La
       {st?.reason && !st.running ? <div className="term-note warn">{st.reason}</div> : null}
       {st && !st.running && st.exitCode !== undefined ? <div className="term-note">{t.termExited.replace('{code}', String(st.exitCode))}</div> : null}
       {term.link !== 'open' ? <div className="term-note">{t.termConnecting}</div> : null}
-      <TerminalView term={term} label={t.termTab} />
+      <TerminalView term={term} label={t.terminal} />
       <div className="chat-note">{t.termIntro}</div>
     </>
   );
@@ -131,7 +147,7 @@ function pillClass(a: AgentState): string {
   }
 }
 
-export function ConsolePanel({ session, selectedId, onSelect, lang }: { session?: SessionState; selectedId: string; onSelect: (id: string) => void; lang: Lang }) {
+export function ConsolePanel({ session, selectedId, onSelect, lang, max, onMax }: { session?: SessionState; selectedId: string; onSelect: (id: string) => void; lang: Lang } & MaxProps) {
   const t = dict[lang];
   const ids = [MANAGER_ID, ...(session?.order ?? [])];
   const a = session?.agents[selectedId] ?? session?.agents[MANAGER_ID];
@@ -146,7 +162,7 @@ export function ConsolePanel({ session, selectedId, onSelect, lang }: { session?
   const expr = a ? expressionOf(a) : undefined;
   return (
     <section className="panel" aria-labelledby="console-h">
-      <div className="panel-head"><IconConsole size={22} /><span id="console-h">{t.console}</span><span className="sub">{t.selectAgentHint}</span></div>
+      <div className="panel-head"><IconConsole size={22} /><span id="console-h">{t.console}</span><span className="sub">{t.selectAgentHint}</span><MaxToggle on={max} onToggle={onMax} lang={lang} /></div>
       <div className="agent-select">
         <label className="sr-only" htmlFor="agent-pick">{t.agent}</label>
         <select id="agent-pick" value={a?.id ?? MANAGER_ID} onChange={(e) => onSelect(e.target.value)}>
