@@ -22,7 +22,7 @@ export function MaxToggle({ on, onToggle, lang, className = '' }: { on: boolean;
 
 type MaxProps = { max: boolean; onMax: () => void };
 
-export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax, onStop }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string; onStop?: () => void } & MaxProps) {
+export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax, onStop, officeStopped }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string; onStop?: () => void; officeStopped?: boolean } & MaxProps) {
   const t = dict[lang];
   const termOk = !!term && term.state?.available !== false;
   const [tab, setTab] = useState<'terminal' | 'history'>('terminal');
@@ -42,12 +42,12 @@ export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax,
         ) : null}
         <MaxToggle on={max} onToggle={onMax} lang={lang} />
       </div>
-      {showTerm ? <TerminalPane term={term!} lang={lang} cwds={cwds} mode={termMode} onStop={onStop} /> : <HistoryPane session={session} lang={lang} term={term} />}
+      {showTerm ? <TerminalPane term={term!} lang={lang} cwds={cwds} mode={termMode} onStop={onStop} officeStopped={officeStopped} /> : <HistoryPane session={session} lang={lang} term={term} />}
     </section>
   );
 }
 
-function TerminalPane({ term, lang, cwds, mode, onStop }: { term: TerminalLink; lang: Lang; cwds: string[]; mode?: string; onStop?: () => void }) {
+function TerminalPane({ term, lang, cwds, mode, onStop, officeStopped }: { term: TerminalLink; lang: Lang; cwds: string[]; mode?: string; onStop?: () => void; officeStopped?: boolean }) {
   const t = dict[lang];
   const st = term.state;
   const [folder, setFolder] = useState('');
@@ -87,7 +87,7 @@ function TerminalPane({ term, lang, cwds, mode, onStop }: { term: TerminalLink; 
       </div>
       {st?.reason && !st.running ? <div className="term-note warn">{st.reason}</div> : null}
       {st && !st.running && st.exitCode !== undefined ? <div className="term-note">{t.termExited.replace('{code}', String(st.exitCode))}</div> : null}
-      {term.link !== 'open' ? <div className="term-note">{t.termConnecting}</div> : null}
+      {officeStopped ? <div className="term-note">{t.termOfficeStopped}</div> : term.link !== 'open' ? <div className="term-note">{t.termConnecting}</div> : null}
       <TerminalView term={term} label={t.terminal} />
       <div className="chat-note">{t.termIntro}</div>
     </>

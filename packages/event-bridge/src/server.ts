@@ -28,7 +28,8 @@ export interface Bridge {
   store: EventStore;
   broadcaster: Broadcaster;
   stats: { received: number; rejected: number };
-  close: () => Promise<void>;
+  /** reason is passed to the UIs ("stopped", "claude-ended"). */
+  close: (reason?: string) => Promise<void>;
 }
 
 const MIME: Record<string, string> = {
@@ -183,10 +184,10 @@ export function createBridge(opts: BridgeOptions): Bridge {
     store,
     broadcaster,
     stats,
-    close: () =>
+    close: (reason?: string) =>
       new Promise<void>((resolve) => {
         reorder.flush();
-        broadcaster.close();
+        broadcaster.close(reason);
         opts.terminal?.stop();
         for (const c of wss.clients) c.terminate();
         server.close(() => resolve());

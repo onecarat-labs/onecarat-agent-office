@@ -3815,9 +3815,13 @@ var Broadcaster = class {
   send(name, events) {
     for (const c of this.clients) write(c, name, events);
   }
-  close() {
+  /** Office is stopping on purpose: tell UIs so they keep the last scene and do not reconnect. */
+  close(reason) {
     clearInterval(this.heartbeat);
-    for (const c of this.clients) c.end();
+    for (const c of this.clients) c.end(`event: closing
+data: ${JSON.stringify({ reason: reason ?? "stopped" })}
+
+`);
     this.clients.clear();
   }
   get count() {
@@ -4198,9 +4202,9 @@ Content-Length: 0\r
     store,
     broadcaster,
     stats,
-    close: () => new Promise((resolve) => {
+    close: (reason) => new Promise((resolve) => {
       reorder.flush();
-      broadcaster.close();
+      broadcaster.close(reason);
       opts.terminal?.stop();
       for (const c of wss.clients) c.terminate();
       server.close(() => resolve());
@@ -4479,9 +4483,31 @@ var Terminal = class {
     this.emit({ t: "reset" });
   }
 };
+function whenTerminalEnds(term, delayMs, onEnd) {
+  let wasRunning = term.state.running;
+  let timer;
+  const off = term.subscribe((m) => {
+    if (m.t !== "state") return;
+    const running = m.state.running;
+    if (running) {
+      clearTimeout(timer);
+      timer = void 0;
+    } else if (wasRunning && !timer) {
+      timer = setTimeout(() => {
+        timer = void 0;
+        if (!term.state.running) onEnd();
+      }, delayMs);
+    }
+    wasRunning = running;
+  });
+  return () => {
+    off();
+    clearTimeout(timer);
+  };
+}
 
 // packages/event-bridge/src/main.ts
-var VERSION = "0.2.3";
+var VERSION = "0.2.4";
 var DEFAULT_PORT = 47821;
 var args = process.argv.slice(2);
 var flag = (name) => args.includes(`--${name}`);
@@ -4512,6 +4538,7 @@ var token = newToken();
 var load = flag("no-terminal") || process.env.ONECARAT_OFFICE_NO_TERMINAL === "1" ? { ok: false, reason: "turned off (--no-terminal)" } : loadPty(ptyCandidates);
 var terminal = new Terminal({ load, cwd: termCwd });
 var bridge = createBridge({ port, token, uiDir, version: VERSION, terminal, devOrigins, onShutdownRequest: () => void shutdown("stop requested") });
+whenTerminalEnds(terminal, 3e3, () => void shutdown("Claude Code in the built-in terminal ended", "claude-ended"));
 bridge.server.on("error", (e) => {
   if (e.code === "EADDRINUSE") console.error(`Port ${port} is in use. Start with --port <n> (and use the same port for the hooks).`);
   else console.error(e.message);
@@ -4529,12 +4556,12 @@ bridge.server.listen(port, "127.0.0.1", () => {
   if (!bundled && flag("open")) openBrowser(`${openBase ?? url}#t=${token}`);
 });
 var stopping = false;
-async function shutdown(reason) {
+async function shutdown(reason, uiReason = "stopped") {
   if (stopping) return;
   stopping = true;
   console.log(`Stopping (${reason})\u2026`);
   removeRuntimeFile(process.pid);
-  await bridge.close();
+  await bridge.close(uiReason);
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));

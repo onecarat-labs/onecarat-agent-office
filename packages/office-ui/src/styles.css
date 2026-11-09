@@ -140,6 +140,7 @@ button { font: inherit; color: inherit; }
 .stage { position: relative; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; min-height: 0; }
 .stage-scroll { width: 100%; height: 100%; }
 .stage svg { width: 100%; height: 100%; display: block; }
+.office-stopped { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); max-width: min(620px, calc(100% - 32px)); padding: 6px 14px; border-radius: var(--radius); font-size: 12.5px; text-align: center; color: var(--muted); background: var(--panel); border: 1px solid var(--border); pointer-events: none; }
 .demo-ribbon { position: absolute; left: 12px; bottom: 10px; padding: 3px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--warn); background: var(--warn-soft); border: 1px dashed var(--warn); pointer-events: none; }
 
 .fig { cursor: pointer; }

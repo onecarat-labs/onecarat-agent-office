@@ -34,9 +34,10 @@ export class Broadcaster {
     for (const c of this.clients) write(c, name, events);
   }
 
-  close(): void {
+  /** Office is stopping on purpose: tell UIs so they keep the last scene and do not reconnect. */
+  close(reason?: string): void {
     clearInterval(this.heartbeat);
-    for (const c of this.clients) c.end();
+    for (const c of this.clients) c.end(`event: closing\ndata: ${JSON.stringify({ reason: reason ?? 'stopped' })}\n\n`);
     this.clients.clear();
   }
 

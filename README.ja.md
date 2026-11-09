@@ -44,7 +44,7 @@ Node.js が無い状態でプラグインを入れても、Claude Code の動作
 - いつもどおり Claude Code を使うだけでもかまいません。ターミナル、IDE 拡張、Desktop app のどれでも同じように表示されます。
 - 画面には、いちばん動いているセッションが表示されます。左の「セッション」ボタンで切り替えられます。
 - 棒人間をクリックすると、下の「コンソール」に、その状態の根拠になった実際のイベントが表示されます。
-- 停止は `Onecarat Agent Officeを止めて`（または `/onecarat-agent-office:office stop`）です。ブラウザのタブを閉じても Office は止まりません。
+- 停止は `Onecarat Agent Officeを止めて`（または `/onecarat-agent-office:office stop`）です。ブラウザのタブを閉じても Office は止まりません。内蔵ターミナルの Claude Code が終わると（`/exit` や「Claude Code を終了」ボタン）、数秒後に Office も自動で止まり、画面にはお別れの場面が残ります。ほかのターミナルのセッションが終わっても Office は止まりません。
 
 ### 表示の約束
 - **架空のエージェントは出しません。** 棒人間は、Claude Code が実際に起動したサブエージェントの分だけです。
