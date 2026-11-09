@@ -3721,16 +3721,17 @@ var require_websocket_server = __commonJS({
 });
 
 // packages/event-bridge/src/main.ts
-import fs5 from "node:fs";
+import fs6 from "node:fs";
+import os2 from "node:os";
 import http2 from "node:http";
-import path5 from "node:path";
+import path6 from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 
 // packages/event-bridge/src/server.ts
 import http from "node:http";
-import fs from "node:fs";
-import path from "node:path";
+import fs2 from "node:fs";
+import path2 from "node:path";
 
 // packages/event-bridge/src/store.ts
 var EventStore = class {
@@ -3836,13 +3837,14 @@ data: ${JSON.stringify(events)}
 }
 
 // packages/adapter-claude-code/src/mask.ts
-var SECRET_ASSIGN = /\b([A-Za-z_][A-Za-z0-9_]*(?:key|token|secret|passw(?:or)?d|pwd|auth|credential|cookie|session)[A-Za-z0-9_]*)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi;
+var SECRET_ASSIGN = /(?<![A-Za-z0-9_])([A-Za-z0-9_-]*(?:key|token|secret|passw(?:or)?d|pwd|auth(?!or\b)|credential|cookie|session)[A-Za-z0-9_-]*)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi;
+var SECRET_FLAG = /(?<![A-Za-z0-9_])(--?[A-Za-z0-9_-]*(?:key|token|secret|passw(?:or)?d|pwd|auth(?!or\b)|credential)[A-Za-z0-9_-]*)\s+("[^"]*"|'[^']*'|[^\s=:-]\S*)/gi;
 var BEARER = /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 var LONG_TOKEN = /\b(?=[A-Za-z0-9_+=-]*\d)(?=[A-Za-z0-9_+=-]*[A-Za-z])[A-Za-z0-9_+=-]{32,}\b/g;
 var KNOWN_PREFIX = /\b(sk-[A-Za-z0-9_-]{6,}|gh[pousr]_[A-Za-z0-9]{10,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{12,})\b/g;
 var URL_CREDS = /(\w+:\/\/)[^\s/:@]+:[^\s/@]+@/g;
 function maskSecrets(s) {
-  return s.replace(SECRET_ASSIGN, (_m, k) => `${k}=***`).replace(BEARER, (_m, k) => `${k} ***`).replace(URL_CREDS, "$1***@").replace(KNOWN_PREFIX, "***").replace(LONG_TOKEN, "***");
+  return s.replace(BEARER, (_m, k) => `${k} ***`).replace(SECRET_ASSIGN, (_m, k) => `${k}=***`).replace(SECRET_FLAG, (_m, k) => `${k} ***`).replace(URL_CREDS, "$1***@").replace(KNOWN_PREFIX, "***").replace(LONG_TOKEN, "***");
 }
 function clip(s, n) {
   const one = s.replace(/\s+/g, " ").trim();
@@ -4064,6 +4066,230 @@ function protocolToken(header2) {
   return list.find((p) => p.startsWith("office-token."))?.slice("office-token.".length);
 }
 
+// packages/event-bridge/src/config-scan.ts
+import fs from "node:fs";
+import path from "node:path";
+var HIDDEN = "\u2022\u2022\u2022 (hidden)";
+var SECRET_KEY = /(key|token|secret|passw(or)?d|pwd|pass\b|auth(?!or\b)|credential|cookie|session)/i;
+var HIDE_ALL_UNDER = /* @__PURE__ */ new Set(["env", "headers", "args"]);
+var MAX_TEXT = 64 * 1024;
+var MAX_JSON_BYTES = 2 * 1024 * 1024;
+var MAX_CLAUDE_JSON_BYTES = 64 * 1024 * 1024;
+var MAX_ITEMS = 300;
+function managedDirFor(platform) {
+  if (platform === "win32") return "C:\\Program Files\\ClaudeCode";
+  if (platform === "darwin") return "/Library/Application Support/ClaudeCode";
+  return "/etc/claude-code";
+}
+function projectSlug(cwd) {
+  return cwd.replace(/[^A-Za-z0-9]/g, "-");
+}
+function sanitize(v, hideAll = false, depth = 0) {
+  if (depth > 32) return "\u2026";
+  if (typeof v === "string") return hideAll ? HIDDEN : maskSecrets(v.replace(/^([a-z][a-z0-9+.-]*:\/\/[^\s?#]*)\?[^\s#]*/i, "$1?***"));
+  if (Array.isArray(v)) return v.map((x) => sanitize(x, hideAll, depth + 1));
+  if (v && typeof v === "object") {
+    const out = {};
+    for (const [k, x] of Object.entries(v)) {
+      const all = hideAll || HIDE_ALL_UNDER.has(k) || SECRET_KEY.test(k);
+      out[k] = all && (typeof x === "string" || typeof x === "number") ? HIDDEN : sanitize(x, all, depth + 1);
+    }
+    return out;
+  }
+  return v;
+}
+function stat(p) {
+  try {
+    return fs.statSync(p);
+  } catch {
+    return void 0;
+  }
+}
+function base(id, layer, kind, p) {
+  const st = stat(p);
+  return { id, layer, kind, path: p, exists: !!st, size: st?.isFile() ? st.size : void 0, mtime: st ? st.mtimeMs : void 0 };
+}
+function readJson(e, limit = MAX_JSON_BYTES) {
+  if ((e.size ?? 0) > limit) {
+    e.error = "too-large";
+    return void 0;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(e.path, "utf8").replace(/^\uFEFF/, ""));
+  } catch (err) {
+    e.error = err instanceof SyntaxError ? "invalid-json" : "unreadable";
+    return void 0;
+  }
+}
+function readText(e, file = e.path) {
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(MAX_TEXT + 1);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      e.truncated = n > MAX_TEXT;
+      e.text = maskSecrets(buf.subarray(0, Math.min(n, MAX_TEXT)).toString("utf8"));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    e.error = "unreadable";
+  }
+}
+function frontMatter(file) {
+  let head;
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(8192);
+      head = buf.subarray(0, fs.readSync(fd, buf, 0, buf.length, 0)).toString("utf8").replace(/^\uFEFF/, "");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return {};
+  }
+  const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(head);
+  if (!m) return {};
+  const out = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = /^(name|description):\s*(.*)$/.exec(line);
+    if (kv) out[kv[1]] = maskSecrets(kv[2].replace(/^["']|["']$/g, "").trim()).slice(0, 300);
+  }
+  return out;
+}
+function listMarkdown(dir, rel = "", depth = 0, out = []) {
+  if (depth > 3 || out.length >= MAX_ITEMS) return out;
+  let names;
+  try {
+    names = fs.readdirSync(path.join(dir, rel), { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const d of names.sort((a, b) => a.name.localeCompare(b.name))) {
+    const r = rel ? `${rel}/${d.name}` : d.name;
+    if (d.isDirectory()) listMarkdown(dir, r, depth + 1, out);
+    else if (d.isFile() && d.name.toLowerCase().endsWith(".md")) {
+      const fm = frontMatter(path.join(dir, r));
+      out.push({ name: fm.name ?? d.name.replace(/\.md$/i, ""), file: r, description: fm.description });
+    }
+    if (out.length >= MAX_ITEMS) break;
+  }
+  return out;
+}
+function listSkills(dir) {
+  const out = [];
+  let names;
+  try {
+    names = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const d of names.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!d.isDirectory()) continue;
+    const file = path.join(dir, d.name, "SKILL.md");
+    if (!stat(file)?.isFile()) continue;
+    const fm = frontMatter(file);
+    out.push({ name: fm.name ?? d.name, file: `${d.name}/SKILL.md`, description: fm.description });
+    if (out.length >= MAX_ITEMS) break;
+  }
+  return out;
+}
+var PROJECT_FIELDS = ["allowedTools", "mcpServers", "enabledMcpjsonServers", "disabledMcpjsonServers", "hasTrustDialogAccepted"];
+var norm = (p) => path.resolve(p).replace(/\\/g, "/").replace(/\/$/, "").toLowerCase();
+function pickClaudeJson(raw, cwd) {
+  const o = raw && typeof raw === "object" ? raw : {};
+  const projects = o.projects && typeof o.projects === "object" ? o.projects : {};
+  const key = Object.keys(projects).find((k) => norm(k) === norm(cwd));
+  const proj = key ? projects[key] : void 0;
+  const picked = {};
+  if (proj) {
+    for (const f of PROJECT_FIELDS) if (f in proj) picked[f] = proj[f];
+  }
+  return sanitize({
+    mcpServers: o.mcpServers ?? {},
+    project: proj ? { path: key, ...picked } : null,
+    projectsKnown: Object.keys(projects).length
+  });
+}
+function scanConfig(opts) {
+  const platform = opts.platform ?? process.platform;
+  const cwd = path.resolve(opts.cwd);
+  const userDir = opts.configDir ? path.resolve(opts.configDir) : path.join(opts.home, ".claude");
+  const claudeJson = opts.configDir ? path.join(userDir, ".claude.json") : path.join(opts.home, ".claude.json");
+  const managed = opts.managedDir ?? managedDirFor(platform);
+  const proj = path.join(cwd, ".claude");
+  const entries = [];
+  const settings = (id, layer, p, kind = "settings") => {
+    const e = base(id, layer, kind, p);
+    if (e.exists) {
+      const raw = readJson(e);
+      if (raw !== void 0) e.json = sanitize(raw);
+    }
+    entries.push(e);
+  };
+  const markdown = (id, layer, ...candidates) => {
+    const p = candidates.find((c) => stat(c)?.isFile()) ?? candidates[0];
+    const e = base(id, layer, "markdown", p);
+    if (e.exists) readText(e);
+    entries.push(e);
+  };
+  const dir = (id, layer, p, kind = "dir") => {
+    const e = base(id, layer, kind, p);
+    if (e.exists) e.items = kind === "skills" ? listSkills(p) : listMarkdown(p);
+    entries.push(e);
+  };
+  settings("managed-settings", "managed", path.join(managed, "managed-settings.json"));
+  settings("managed-mcp", "managed", path.join(managed, "managed-mcp.json"), "mcp");
+  markdown("managed-claude-md", "managed", path.join(managed, "CLAUDE.md"));
+  settings("user-settings", "user", path.join(userDir, "settings.json"));
+  {
+    const e = base("user-claude-json", "user", "claude-json", claudeJson);
+    if (e.exists) {
+      const raw = readJson(e, MAX_CLAUDE_JSON_BYTES);
+      if (raw !== void 0) e.json = pickClaudeJson(raw, cwd);
+    }
+    entries.push(e);
+  }
+  markdown("user-claude-md", "user", path.join(userDir, "CLAUDE.md"));
+  dir("user-rules", "user", path.join(userDir, "rules"));
+  dir("user-agents", "user", path.join(userDir, "agents"));
+  dir("user-commands", "user", path.join(userDir, "commands"));
+  dir("user-skills", "user", path.join(userDir, "skills"), "skills");
+  dir("user-output-styles", "user", path.join(userDir, "output-styles"));
+  settings("user-keybindings", "user", path.join(userDir, "keybindings.json"), "keybindings");
+  {
+    const p = path.join(userDir, "projects", projectSlug(cwd), "memory");
+    const e = base("user-memory", "user", "memory", p);
+    if (e.exists) {
+      e.items = listMarkdown(p).filter((i) => i.file !== "MEMORY.md");
+      const index = path.join(p, "MEMORY.md");
+      if (stat(index)?.isFile()) readText(e, index);
+    }
+    entries.push(e);
+  }
+  settings("project-settings", "project", path.join(proj, "settings.json"));
+  settings("project-settings-local", "project", path.join(proj, "settings.local.json"));
+  markdown("project-claude-md", "project", path.join(cwd, "CLAUDE.md"), path.join(proj, "CLAUDE.md"));
+  markdown("project-claude-local-md", "project", path.join(cwd, "CLAUDE.local.md"));
+  {
+    const found = [];
+    for (let d = path.dirname(cwd); ; d = path.dirname(d)) {
+      for (const n of ["CLAUDE.md", "CLAUDE.local.md"]) if (stat(path.join(d, n))?.isFile()) found.push({ name: n, file: path.join(d, n) });
+      if (path.dirname(d) === d) break;
+    }
+    const e = { id: "project-ancestors", layer: "project", kind: "ancestors", path: path.dirname(cwd), exists: found.length > 0, items: found };
+    entries.push(e);
+  }
+  dir("project-rules", "project", path.join(proj, "rules"));
+  settings("project-mcp", "project", path.join(cwd, ".mcp.json"), "mcp");
+  dir("project-agents", "project", path.join(proj, "agents"));
+  dir("project-commands", "project", path.join(proj, "commands"));
+  dir("project-skills", "project", path.join(proj, "skills"), "skills");
+  dir("project-output-styles", "project", path.join(proj, "output-styles"));
+  return { cwd, userDir, scannedAt: Date.now(), entries };
+}
+
 // packages/event-bridge/src/server.ts
 var MIME = {
   ".html": "text/html; charset=utf-8",
@@ -4079,7 +4305,7 @@ function createBridge(opts) {
   const broadcaster = new Broadcaster(store);
   const reorder = new ReorderBuffer(opts.reorderWindowMs ?? 300, (b) => store.append(b));
   const stats = { received: 0, rejected: 0 };
-  const uiRoot = opts.uiDir ? path.resolve(opts.uiDir) : void 0;
+  const uiRoot = opts.uiDir ? path2.resolve(opts.uiDir) : void 0;
   const send = (res, code, body, type = "application/json; charset=utf-8", extra = {}) => {
     res.writeHead(code, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
     res.end(body);
@@ -4126,10 +4352,10 @@ function createBridge(opts) {
     }
     const authed = tokenMatches(req.headers["x-office-token"], opts.token);
     if (url.pathname === "/api/health" && req.method === "GET") {
-      const base = { ok: true, app: "onecarat-agent-office", version: opts.version, authed };
-      if (!authed) return send(res, 200, JSON.stringify(base));
+      const base2 = { ok: true, app: "onecarat-agent-office", version: opts.version, authed };
+      if (!authed) return send(res, 200, JSON.stringify(base2));
       const terminal2 = opts.terminal?.state ?? { available: false, reason: "disabled", running: false };
-      return send(res, 200, JSON.stringify({ ...base, events: store.size, clients: broadcaster.count, received: stats.received, terminal: terminal2 }));
+      return send(res, 200, JSON.stringify({ ...base2, events: store.size, clients: broadcaster.count, received: stats.received, terminal: terminal2 }));
     }
     if (url.pathname.startsWith("/api/") || url.pathname === "/events") {
       if (!authed) {
@@ -4147,6 +4373,16 @@ function createBridge(opts) {
       opts.terminal?.clearScrollback();
       return send(res, 200, "{}");
     }
+    if (url.pathname === "/api/config" && req.method === "GET") {
+      if (!opts.config) return send(res, 404, "{}");
+      const asked = url.searchParams.get("cwd");
+      let cwd = opts.config.defaultCwd;
+      if (asked) {
+        if (!path2.isAbsolute(asked) || asked.includes("\0") || !fs2.statSync(asked, { throwIfNoEntry: false })?.isDirectory()) return send(res, 400, '{"error":"bad cwd"}');
+        cwd = asked;
+      }
+      return send(res, 200, JSON.stringify(scanConfig({ cwd, home: opts.config.home, configDir: opts.config.configDir, managedDir: opts.config.managedDir })));
+    }
     if (url.pathname === "/api/shutdown" && req.method === "POST") {
       send(res, 200, "{}");
       opts.onShutdownRequest?.();
@@ -4160,11 +4396,11 @@ function createBridge(opts) {
         return send(res, 400, "bad path", "text/plain");
       }
       if (rel.includes("\0")) return send(res, 400, "bad path", "text/plain");
-      const file = path.resolve(uiRoot, "." + rel);
-      if (!file.startsWith(uiRoot + path.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
-      fs.readFile(file, (err, data) => {
+      const file = path2.resolve(uiRoot, "." + rel);
+      if (!file.startsWith(uiRoot + path2.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
+      fs2.readFile(file, (err, data) => {
         if (err) return send(res, 404, "not found", "text/plain");
-        const type = MIME[path.extname(file).toLowerCase()] ?? "application/octet-stream";
+        const type = MIME[path2.extname(file).toLowerCase()] ?? "application/octet-stream";
         const extra = type.startsWith("text/html") ? { "content-security-policy": CSP } : {};
         if (rel.startsWith("/assets/")) extra["cache-control"] = "public, max-age=31536000, immutable";
         res.writeHead(200, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
@@ -4242,28 +4478,28 @@ function attachTerminal(ws, term) {
 }
 
 // packages/event-bridge/src/runtime-file.ts
-import fs2 from "node:fs";
+import fs3 from "node:fs";
 import os from "node:os";
-import path2 from "node:path";
+import path3 from "node:path";
 function runtimeDir(env = process.env, platform = process.platform) {
   if (env.ONECARAT_OFFICE_RUNTIME_DIR) return env.ONECARAT_OFFICE_RUNTIME_DIR;
   const home = os.homedir();
-  if (platform === "win32") return path2.join(env.LOCALAPPDATA || path2.join(home, "AppData", "Local"), "onecarat-agent-office");
-  if (platform === "darwin") return path2.join(home, "Library", "Application Support", "onecarat-agent-office");
-  return path2.join(env.XDG_STATE_HOME || path2.join(home, ".local", "state"), "onecarat-agent-office");
+  if (platform === "win32") return path3.join(env.LOCALAPPDATA || path3.join(home, "AppData", "Local"), "onecarat-agent-office");
+  if (platform === "darwin") return path3.join(home, "Library", "Application Support", "onecarat-agent-office");
+  return path3.join(env.XDG_STATE_HOME || path3.join(home, ".local", "state"), "onecarat-agent-office");
 }
 function runtimeFilePath(env, platform) {
-  return path2.join(runtimeDir(env, platform), "bridge.json");
+  return path3.join(runtimeDir(env, platform), "bridge.json");
 }
 function writeRuntimeFile(info, file = runtimeFilePath()) {
-  fs2.mkdirSync(path2.dirname(file), { recursive: true, mode: 448 });
+  fs3.mkdirSync(path3.dirname(file), { recursive: true, mode: 448 });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs2.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
-  fs2.renameSync(tmp, file);
+  fs3.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
+  fs3.renameSync(tmp, file);
 }
 function readRuntimeFile(file = runtimeFilePath()) {
   try {
-    const v = JSON.parse(fs2.readFileSync(file, "utf8"));
+    const v = JSON.parse(fs3.readFileSync(file, "utf8"));
     return typeof v.port === "number" && typeof v.token === "string" ? v : void 0;
   } catch {
     return void 0;
@@ -4273,16 +4509,16 @@ function removeRuntimeFile(pid, file = runtimeFilePath()) {
   const cur = readRuntimeFile(file);
   if (cur && cur.pid !== pid) return;
   try {
-    fs2.unlinkSync(file);
+    fs3.unlinkSync(file);
   } catch {
   }
 }
 
 // packages/event-bridge/src/terminal.ts
 import crypto2 from "node:crypto";
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 import { createRequire } from "node:module";
-import path4 from "node:path";
+import path5 from "node:path";
 
 // packages/event-bridge/src/child-env.ts
 var DROP_EXACT = /* @__PURE__ */ new Set(["CLAUDECODE", "AI_AGENT", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PROJECT_DIR", "CLAUDE_ENV_FILE"]);
@@ -4310,8 +4546,8 @@ function childEnv(env = process.env, extra = {}) {
 }
 
 // packages/event-bridge/src/claude-path.ts
-import fs3 from "node:fs";
-import path3 from "node:path";
+import fs4 from "node:fs";
+import path4 from "node:path";
 var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
 function envGet(env, name) {
   const k = Object.keys(env).find((x) => x.toUpperCase() === name);
@@ -4323,12 +4559,12 @@ function resolveClaude(env = process.env, platform = process.platform) {
   const names = win ? (envGet(env, "PATHEXT") ?? DEFAULT_PATHEXT).split(";").filter(Boolean).map((e) => "claude" + e.toLowerCase()) : ["claude"];
   for (const raw of entries) {
     const dir = raw.replace(/^"|"$/g, "");
-    if (!dir || dir === "." || !path3.isAbsolute(dir)) continue;
+    if (!dir || dir === "." || !path4.isAbsolute(dir)) continue;
     for (const name of names) {
-      const f = path3.join(dir, name);
+      const f = path4.join(dir, name);
       try {
-        if (!fs3.statSync(f).isFile()) continue;
-        if (!win) fs3.accessSync(f, fs3.constants.X_OK);
+        if (!fs4.statSync(f).isFile()) continue;
+        if (!win) fs4.accessSync(f, fs4.constants.X_OK);
         if (f.includes('"')) continue;
         return f;
       } catch {
@@ -4351,8 +4587,8 @@ function loadPty(candidates) {
   const plat = `${process.platform}-${process.arch}`;
   const reasons = [];
   for (const dir of candidates) {
-    if (!fs4.existsSync(path4.join(dir, "package.json"))) continue;
-    const hasNative = fs4.existsSync(path4.join(dir, "prebuilds", plat)) || fs4.existsSync(path4.join(dir, "build", "Release"));
+    if (!fs5.existsSync(path5.join(dir, "package.json"))) continue;
+    const hasNative = fs5.existsSync(path5.join(dir, "prebuilds", plat)) || fs5.existsSync(path5.join(dir, "build", "Release"));
     if (!hasNative) {
       reasons.push(`no node-pty binary for ${plat}`);
       continue;
@@ -4416,7 +4652,7 @@ var Terminal = class {
     if (this.proc) return "already running";
     const dir = cwd ?? this.st.cwd;
     try {
-      if (!fs4.statSync(dir).isDirectory()) return "not a folder";
+      if (!fs5.statSync(dir).isDirectory()) return "not a folder";
     } catch {
       return "folder not found";
     }
@@ -4507,7 +4743,7 @@ function whenTerminalEnds(term, delayMs, onEnd) {
 }
 
 // packages/event-bridge/src/main.ts
-var VERSION = "0.2.4";
+var VERSION = "0.2.5";
 var DEFAULT_PORT = 47821;
 var args = process.argv.slice(2);
 var flag = (name) => args.includes(`--${name}`);
@@ -4515,8 +4751,8 @@ var opt = (name) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : void 0;
 };
-var here = path5.dirname(fileURLToPath(import.meta.url));
-var bundled = fs5.existsSync(path5.join(here, "ui", "index.html"));
+var here = path6.dirname(fileURLToPath(import.meta.url));
+var bundled = fs6.existsSync(path6.join(here, "ui", "index.html"));
 var LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}\/?$/;
 var devOpt = (name) => bundled ? void 0 : opt(name);
 var devOrigin = devOpt("dev-origin");
@@ -4525,9 +4761,9 @@ if (devOrigin && !LOOPBACK.test(devOrigin)) fail(`--dev-origin must be a loopbac
 if (openBase && !LOOPBACK.test(openBase)) fail(`--open-base must be a loopback URL, got ${openBase}`);
 var port = Number(opt("port") ?? process.env.ONECARAT_OFFICE_PORT ?? DEFAULT_PORT);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) fail(`--port must be between 1024 and 65535, got ${opt("port")}`);
-var uiDir = devOpt("ui-dir") ?? (bundled ? path5.join(here, "ui") : path5.resolve(here, "../../office-ui/dist"));
-var ptyCandidates = [path5.join(here, "vendor", "node-pty"), path5.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")];
-var termCwd = path5.resolve(opt("cwd") ?? process.cwd());
+var uiDir = devOpt("ui-dir") ?? (bundled ? path6.join(here, "ui") : path6.resolve(here, "../../office-ui/dist"));
+var ptyCandidates = [path6.join(here, "vendor", "node-pty"), path6.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")];
+var termCwd = path6.resolve(opt("cwd") ?? process.cwd());
 var devOrigins = devOrigin ? [devOrigin.replace(/\/$/, "")] : [];
 var existing = readRuntimeFile();
 if (existing && existing.pid !== process.pid && isAlive(existing.pid) && await isOffice(existing.port, existing.token)) {
@@ -4537,7 +4773,17 @@ if (existing && existing.pid !== process.pid && isAlive(existing.pid) && await i
 var token = newToken();
 var load = flag("no-terminal") || process.env.ONECARAT_OFFICE_NO_TERMINAL === "1" ? { ok: false, reason: "turned off (--no-terminal)" } : loadPty(ptyCandidates);
 var terminal = new Terminal({ load, cwd: termCwd });
-var bridge = createBridge({ port, token, uiDir, version: VERSION, terminal, devOrigins, onShutdownRequest: () => void shutdown("stop requested") });
+var bridge = createBridge({
+  port,
+  token,
+  uiDir,
+  version: VERSION,
+  terminal,
+  devOrigins,
+  // Read-only view of Claude Code's own configuration files (secret values hidden, nothing kept).
+  config: { home: os2.homedir(), defaultCwd: termCwd, configDir: process.env.CLAUDE_CONFIG_DIR || void 0 },
+  onShutdownRequest: () => void shutdown("stop requested")
+});
 whenTerminalEnds(terminal, 3e3, () => void shutdown("Claude Code in the built-in terminal ended", "claude-ended"));
 bridge.server.on("error", (e) => {
   if (e.code === "EADDRINUSE") console.error(`Port ${port} is in use. Start with --port <n> (and use the same port for the hooks).`);

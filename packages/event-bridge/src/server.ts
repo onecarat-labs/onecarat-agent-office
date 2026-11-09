@@ -8,6 +8,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { CSP, SECURITY_HEADERS, crossSite, hostAllowed, looksLikeBrowser, protocolToken, tokenMatches, WS_PROTOCOL } from './security.ts';
 import type { Terminal, TerminalMessage } from './terminal.ts';
+import { scanConfig } from './config-scan.ts';
 
 export interface BridgeOptions {
   port: number;
@@ -21,6 +22,8 @@ export interface BridgeOptions {
   terminal?: Terminal;
   /** Extra exact origins allowed for the UI besides http://127.0.0.1:<port> (the Vite dev server only). */
   devOrigins?: string[];
+  /** Claude Code configuration view (read-only). Without it, /api/config answers 404. */
+  config?: { home: string; defaultCwd: string; configDir?: string; managedDir?: string };
 }
 
 export interface Bridge {
@@ -125,6 +128,17 @@ export function createBridge(opts: BridgeOptions): Bridge {
       broadcaster.reset();
       opts.terminal?.clearScrollback();
       return send(res, 200, '{}');
+    }
+    if (url.pathname === '/api/config' && req.method === 'GET') {
+      // Read-only, read again on every request, nothing kept. Secret values are hidden in config-scan.ts.
+      if (!opts.config) return send(res, 404, '{}');
+      const asked = url.searchParams.get('cwd');
+      let cwd = opts.config.defaultCwd;
+      if (asked) {
+        if (!path.isAbsolute(asked) || asked.includes('\0') || !fs.statSync(asked, { throwIfNoEntry: false })?.isDirectory()) return send(res, 400, '{"error":"bad cwd"}');
+        cwd = asked;
+      }
+      return send(res, 200, JSON.stringify(scanConfig({ cwd, home: opts.config.home, configDir: opts.config.configDir, managedDir: opts.config.managedDir })));
     }
     if (url.pathname === '/api/shutdown' && req.method === 'POST') {
       // Used by the launcher's "stop" (it reads the token from the runtime file).

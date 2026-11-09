@@ -2,6 +2,7 @@
 // Onecarat Agent Office bridge: localhost-only event receiver + UI server (+ optional embedded terminal).
 // It never calls a model, never reads Claude credentials, and keeps events and terminal output in memory only.
 import fs from 'node:fs';
+import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +12,7 @@ import { newToken } from './security.ts';
 import { readRuntimeFile, removeRuntimeFile, runtimeFilePath, writeRuntimeFile } from './runtime-file.ts';
 import { Terminal, loadPty, whenTerminalEnds } from './terminal.ts';
 
-const VERSION = '0.2.4';
+const VERSION = '0.2.5';
 const DEFAULT_PORT = 47821;
 
 const args = process.argv.slice(2);
@@ -54,7 +55,11 @@ if (existing && existing.pid !== process.pid && isAlive(existing.pid) && (await 
 const token = newToken();
 const load = flag('no-terminal') || process.env.ONECARAT_OFFICE_NO_TERMINAL === '1' ? { ok: false as const, reason: 'turned off (--no-terminal)' } : loadPty(ptyCandidates);
 const terminal = new Terminal({ load, cwd: termCwd });
-const bridge = createBridge({ port, token, uiDir, version: VERSION, terminal, devOrigins, onShutdownRequest: () => void shutdown('stop requested') });
+const bridge = createBridge({
+  port, token, uiDir, version: VERSION, terminal, devOrigins,
+  // Read-only view of Claude Code's own configuration files (secret values hidden, nothing kept).
+  config: { home: os.homedir(), defaultCwd: termCwd, configDir: process.env.CLAUDE_CONFIG_DIR || undefined },
+  onShutdownRequest: () => void shutdown('stop requested') });
 // Claude Code in the built-in terminal has ended: Office stops too. The page keeps its last scene (the goodbye).
 // Sessions in other terminals do not stop Office.
 whenTerminalEnds(terminal, 3000, () => void shutdown('Claude Code in the built-in terminal ended', 'claude-ended'));

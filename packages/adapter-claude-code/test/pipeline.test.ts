@@ -100,6 +100,21 @@ test('masking and display rules', () => {
   assert.equal(maskSecrets('curl -H "Authorization: Bearer abcdefghijklmnop"').includes('abcdefghijklmnop'), false);
   assert.equal(maskSecrets('git clone https://user:pw@host/x').includes('pw@'), false);
   assert.equal(maskSecrets('sk-ant-api03-xxxxxxx'), '***');
+  // Bare keywords, header names, CLI flags and URL queries (found missing by the configuration-view audit).
+  for (const [input, leak] of [
+    ['token=abc12345', 'abc12345'],
+    ['PASSWORD=hunter2', 'hunter2'],
+    ['--token=abc12345', 'abc12345'],
+    ['https://mcp.example.com/sse?token=abc12345', 'abc12345'],
+    ['curl -H "X-API-Key: hunter2x"', 'hunter2x'],
+    ['Authorization: hunter2x', 'hunter2x'],
+    ['npx srv --token abc12345 --port 3', 'abc12345'],
+    ['npx srv --api-key "a b c"', 'a b c'],
+  ] as const) assert.equal(maskSecrets(input).includes(leak), false, input);
+  assert.equal(maskSecrets('npx srv --token abc12345 --port 3'), 'npx srv --token *** --port 3');
+  // No false positives on ordinary words.
+  assert.equal(maskSecrets('author: me, session 3 started'), 'author: me, session 3 started');
+  assert.equal(maskSecrets('--no-auth --verbose'), '--no-auth --verbose');
   assert.equal(displayPath('C:\\repo\\.env'), '(sensitive file)');
   assert.equal(displayPath('/home/u/.claude/.credentials.json'), '(sensitive file)');
   assert.equal(displayPath('C:\\repo\\src\\Dashboard.tsx'), 'src/Dashboard.tsx');
