@@ -74,6 +74,11 @@ const en = {
   termConnecting: 'Connecting to the terminal…',
   locked: 'This page was opened without its access key. Open Office from Claude Code: ask "Open Onecarat Agent Office" or run /onecarat-agent-office:office open.',
   lockedChip: 'No access key',
+  stoppedChip: 'Stopped',
+  stoppedClaudeEnded: 'Claude Code has ended, so Office has stopped.',
+  stoppedByStop: 'Office has stopped.',
+  stoppedRestart: 'To use it again, run /onecarat-agent-office:office start in Claude Code.',
+  termOfficeStopped: 'Office has stopped. The terminal is no longer connected.',
 } as const;
 
 type Dict = { [K in keyof typeof en]: string };
@@ -150,6 +155,11 @@ const ja: Dict = {
   termConnecting: 'ターミナルに接続しています…',
   locked: 'このページはアクセス用のキーなしで開かれています。Claude Code から開き直してください（「Onecarat Agent Officeを開いて」と頼むか、/onecarat-agent-office:office open を実行）。',
   lockedChip: 'キーなし',
+  stoppedChip: '停止しました',
+  stoppedClaudeEnded: 'Claude Code が終了したので、Office も停止しました。',
+  stoppedByStop: 'Office は停止しました。',
+  stoppedRestart: 'もう一度使うときは、Claude Code で /onecarat-agent-office:office start を実行してください。',
+  termOfficeStopped: 'Office が停止したため、ターミナルは切断されています。',
 };
 
 export const dict: Record<Lang, Dict> = { en, ja };

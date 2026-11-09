@@ -201,3 +201,31 @@ export class Terminal {
     this.emit({ t: 'reset' });
   }
 }
+
+/**
+ * Calls onEnd once the embedded claude has ended (/exit, the Stop button, or a crash) and was not started again
+ * within delayMs. The delay lets the last hooks (SessionEnd) reach the UI and covers "restart in this folder",
+ * which stops and starts right away. Returns a function that cancels it.
+ */
+export function whenTerminalEnds(term: Terminal, delayMs: number, onEnd: () => void): () => void {
+  let wasRunning = term.state.running;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const off = term.subscribe((m) => {
+    if (m.t !== 'state') return;
+    const running = m.state.running;
+    if (running) {
+      clearTimeout(timer);
+      timer = undefined;
+    } else if (wasRunning && !timer) {
+      timer = setTimeout(() => {
+        timer = undefined;
+        if (!term.state.running) onEnd();
+      }, delayMs);
+    }
+    wasRunning = running;
+  });
+  return () => {
+    off();
+    clearTimeout(timer);
+  };
+}

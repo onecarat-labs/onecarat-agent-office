@@ -44,6 +44,6 @@ After `start`, say the browser was opened at the URL it printed (normally http:/
 - Keep using Claude Code as usual — terminal, IDE or Desktop app. Office shows the session that is most active; other sessions can be picked from the Sessions button.
 - Figures appear only for subagents Claude Code really starts. Success/failure is an **estimate** from events. The high-five is a visual effect.
 - Permission prompts are always answered by the user in Claude Code (the built-in terminal *is* Claude Code), never by Office.
-- Closing the browser tab does not stop Office; use "stop". Stopping discards events and terminal output, and also ends a Claude Code running in the built-in terminal.
+- Closing the browser tab does not stop Office; use "stop". When Claude Code in the built-in terminal ends (/exit or its Stop button), Office stops by itself a few seconds later and the page keeps the goodbye scene; sessions in other terminals do not stop it. Stopping discards events and terminal output, and also ends a Claude Code running in the built-in terminal.
 
 If `start` reports an error, show it to the user and suggest `node "${CLAUDE_PLUGIN_ROOT}/dist/office.mjs" check`. If the port is in use, `start --port 47822` uses another port.

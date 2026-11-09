@@ -2,8 +2,11 @@ import { useEffect, useReducer, useState } from 'react';
 import { initialOfficeState, reduceOffice, type OfficeEvent, type OfficeState } from '@onecarat/domain';
 import { authHeaders, officeToken } from './token.ts';
 
-/** locked = a bridge answers, but this page has no (valid) access key. */
-export type LinkStatus = 'checking' | 'connected' | 'reconnecting' | 'unavailable' | 'locked';
+/**
+ * locked = a bridge answers, but this page has no (valid) access key.
+ * stopped = the bridge said it is stopping on purpose; the page keeps its last state and does not reconnect.
+ */
+export type LinkStatus = 'checking' | 'connected' | 'reconnecting' | 'unavailable' | 'locked' | 'stopped';
 
 type Action = { kind: 'snapshot'; events: OfficeEvent[] } | { kind: 'events'; events: OfficeEvent[] };
 
@@ -21,6 +24,7 @@ function reducer(state: OfficeState, a: Action): OfficeState {
 export function useLiveFeed(enabled: boolean) {
   const [state, dispatch] = useReducer(reducer, initialOfficeState);
   const [status, setStatus] = useState<LinkStatus>('checking');
+  const [stopReason, setStopReason] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (!enabled) return;
@@ -50,6 +54,15 @@ export function useLiveFeed(enabled: boolean) {
               else if (line.startsWith('data: ')) data += line.slice(6);
             }
             if ((name === 'snapshot' || name === 'events') && data) dispatch({ kind: name, events: JSON.parse(data) as OfficeEvent[] });
+            else if (name === 'closing') {
+              try {
+                setStopReason(String((JSON.parse(data) as { reason?: unknown }).reason ?? 'stopped'));
+              } catch {
+                setStopReason('stopped');
+              }
+              setStatus('stopped');
+              return;
+            }
           }
         }
         throw new Error('stream ended');
@@ -81,5 +94,5 @@ export function useLiveFeed(enabled: boolean) {
     };
   }, [enabled]);
 
-  return { state, status };
+  return { state, status, stopReason };
 }

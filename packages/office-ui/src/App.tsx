@@ -71,8 +71,11 @@ export function App() {
   const demo = useDemoPlayer(isDemo);
   const { paused, setPaused, restart } = demo;
   const state = isDemo ? demo.state : live.state;
-  const liveOk = !isDemo && (live.status === 'connected' || live.status === 'reconnecting');
-  const term = useTerminal(liveOk);
+  // stopped: Office was stopped (by "stop", or because Claude Code in the built-in terminal ended). The last scene
+  // stays on screen — the goodbye keeps playing — but nothing reconnects.
+  const stopped = !isDemo && live.status === 'stopped';
+  const liveOk = !isDemo && (live.status === 'connected' || live.status === 'reconnecting' || stopped);
+  const term = useTerminal(liveOk && !stopped);
 
   const [pinnedSession, setPinnedSession] = useState<string | undefined>(undefined);
   // Goodbye after "Stop Claude Code": keeps the stage on the session that was shown while the figures bow and wave.
@@ -167,7 +170,7 @@ export function App() {
             {session ? <span className="chip" title={session.id}>{sessionLabel(session)}</span> : null}
             <span className={`chip ${live.status === 'connected' ? 'live' : 'demo'}`}>
               <span className="dot" />
-              {live.status === 'connected' ? t.liveChip : live.status === 'reconnecting' ? t.reconnecting : live.status === 'locked' ? t.lockedChip : t.offline}
+              {live.status === 'connected' ? t.liveChip : live.status === 'reconnecting' ? t.reconnecting : live.status === 'locked' ? t.lockedChip : stopped ? t.stoppedChip : t.offline}
             </span>
           </>
         )}
@@ -223,7 +226,7 @@ export function App() {
           })}
           {state.sessionOrder.length === 0 ? <p>{t.noSession}</p> : null}
           <p>{t.sessionsNote}</p>
-          {!isDemo ? (
+          {!isDemo && !stopped ? (
             <button className="sess-item" onClick={() => void fetch('/api/clear', { method: 'POST', headers: authHeaders() })}>{t.clearHistory}</button>
           ) : null}
         </div>
@@ -235,10 +238,15 @@ export function App() {
           <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onSelect} motion={motion} lang={lang} demo={isDemo} farewellAt={farewell?.at} ended={sessionOver} /></div>
           {isDemo ? <div className="demo-ribbon">{t.demoRibbon}</div> : null}
           {!isDemo && live.status === 'locked' ? <div className="live-waiting">{t.locked}</div> : null}
-          {!isDemo && live.status !== 'locked' && !session ? <div className="live-waiting">{t.liveWaiting}</div> : null}
+          {!isDemo && live.status !== 'locked' && !stopped && !session ? <div className="live-waiting">{t.liveWaiting}</div> : null}
+          {stopped ? (
+            <div className="office-stopped" role="status">
+              {live.stopReason === 'claude-ended' ? t.stoppedClaudeEnded : t.stoppedByStop} {t.stoppedRestart}
+            </div>
+          ) : null}
         </div>
         <div className="bottom">
-          <TerminalPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => sayGoodbye(sessionId)} />
+          <TerminalPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => sayGoodbye(sessionId)} officeStopped={stopped} />
           <ConsolePanel session={session} selectedId={selectedId} onSelect={onSelect} lang={lang} max={maxPane === 'console'} onMax={() => toggleMax('console')} />
         </div>
       </main>

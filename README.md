@@ -44,7 +44,7 @@ Installing the plugin without Node.js does not break Claude Code: the hooks are 
 - Or just use Claude Code as usual: terminal, IDE extension or Desktop app all show up the same way.
 - The most active session is shown; switch with the Sessions button on the left.
 - Click a figure to see the real events behind its state in the Console panel.
-- Stop with "Stop Onecarat Agent Office" or `/onecarat-agent-office:office stop`. Closing the tab does not stop it.
+- Stop with "Stop Onecarat Agent Office" or `/onecarat-agent-office:office stop`. Closing the tab does not stop it. When Claude Code in the built-in terminal ends (`/exit`, the Stop button), Office stops by itself a few seconds later; the page keeps the goodbye scene. Sessions in other terminals do not stop Office.
 
 ### What the screen promises
 - **No fake agents.** A figure appears only for a subagent Claude Code really started.
