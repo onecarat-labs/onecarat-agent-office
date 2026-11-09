@@ -1,7 +1,10 @@
 import type { Face, Pose } from '@onecarat/domain';
 
-/** 'bow' and 'wave' are stage-only choreography poses (leaving the office), never derived from events. */
-export type FigurePose = Pose | 'highfive' | 'bow' | 'wave';
+/**
+ * 'bow', 'bowFront' and 'wave' are stage-only choreography poses (leaving the office, saying goodbye to the user),
+ * never derived from events. 'bowFront' bows toward the viewer instead of to the side.
+ */
+export type FigurePose = Pose | 'highfive' | 'bow' | 'bowFront' | 'wave';
 
 export interface FigureProps {
   pose: FigurePose;
@@ -38,10 +41,16 @@ export function Figure({ pose, face, sweat, walking, motion, facing, manager }: 
           {walking ? sw('0.52s', `-20 ${HIP.x} ${HIP.y};20 ${HIP.x} ${HIP.y};-20 ${HIP.x} ${HIP.y}`) : null}
           <polyline className="line" points={pts([HIP.x, HIP.y], [14, -24], [18, 0])} />
         </g>
-        {/* upper body: tilts forward from the hip for a bow (CSS animation; a static tilt under reduced motion) */}
+        {/* upper body: tilts forward from the hip for a bow (CSS animation; a static tilt under reduced motion).
+            A bow toward the viewer is drawn as the upper body shortening toward the hip. */}
         <g
-          className={pose === 'bow' && motion ? 'bowing' : undefined}
-          transform={pose === 'bow' && !motion ? `rotate(24 ${HIP.x} ${HIP.y})` : undefined}
+          className={motion ? (pose === 'bow' ? 'bowing' : pose === 'bowFront' ? 'bowing-front' : undefined) : undefined}
+          transform={
+            motion ? undefined
+            : pose === 'bow' ? `rotate(24 ${HIP.x} ${HIP.y})`
+            : pose === 'bowFront' ? `translate(0 ${HIP.y}) scale(1 0.8) translate(0 ${-HIP.y})`
+            : undefined
+          }
         >
           {/* body */}
           <line className="line" x1={0} y1={-122} x2={HIP.x} y2={HIP.y} />
@@ -110,6 +119,14 @@ function Arms({ pose, typing, motion }: { pose: FigurePose | 'walk'; typing: boo
         <>
           <polyline className="line" points={pts([S.x, S.y], [-6, -84], [8, -64])} />
           <polyline className="line" points={pts([S.x, S.y], [10, -84], [12, -62])} />
+        </>
+      );
+    case 'bowFront':
+      // hands together in front, seen from the front
+      return (
+        <>
+          <polyline className="line" points={pts([S.x, S.y], [-12, -84], [-3, -64])} />
+          <polyline className="line" points={pts([S.x, S.y], [12, -84], [3, -64])} />
         </>
       );
     case 'wave': {

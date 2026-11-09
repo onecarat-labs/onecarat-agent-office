@@ -17,6 +17,25 @@ const LINGER_MS = 10_000;
 /** A subagent that was already finished this long before we first saw it (page reload, session switch) is not shown. */
 const STALE_MS = 15_000;
 
+/** Goodbye when the user stops Claude Code: everyone stands up, bows toward the viewer, then waves (visual only). */
+const FW_UP_MS = 500;
+const FW_BOW_MS = 1600;
+const FW_WAVE_MS = 3000;
+/** How much taller a figure at a desk stands during the goodbye (its legs stay hidden by the desk front). */
+const FW_RISE = 40;
+export const FAREWELL_MS = FW_UP_MS + FW_BOW_MS + FW_WAVE_MS;
+type FarewellStep = 'up' | 'bow' | 'wave';
+function farewellStep(at: number | undefined, now: number): FarewellStep | undefined {
+  if (at === undefined) return undefined;
+  const e = now - at;
+  if (e < 0) return undefined;
+  if (e < FW_UP_MS) return 'up';
+  if (e < FW_UP_MS + FW_BOW_MS) return 'bow';
+  if (e < FAREWELL_MS) return 'wave';
+  return undefined;
+}
+const farewellPose = (s: FarewellStep): FigurePose => (s === 'bow' ? 'bowFront' : s === 'wave' ? 'wave' : 'stand');
+
 type Phase =
   | 'arrive' | 'toDesk' | 'atDesk' | 'toManager' | 'atManager' | 'highfive' | 'back' | 'done'
   // leaving (visual only): step out from the desk, walk to the door by the manager, bow, fade out
@@ -30,6 +49,10 @@ export interface StageProps {
   motion: boolean;
   lang: Lang;
   demo: boolean;
+  /** When the user pressed "Stop Claude Code" (ms epoch); starts the goodbye. */
+  farewellAt?: number;
+  /** The shown session is over (SessionEnd, or the built-in claude stopped): after the goodbye the manager keeps waving. */
+  ended?: boolean;
 }
 
 function slotXs(n: number): { xs: number[]; deskW: number } {
@@ -41,7 +64,7 @@ function slotXs(n: number): { xs: number[]; deskW: number } {
   return { xs: Array.from({ length: n }, (_, i) => start + i * spacing), deskW: Math.min(230, spacing - 30) };
 }
 
-export function Stage({ session, selectedId, onSelect, motion, lang, demo }: StageProps) {
+export function Stage({ session, selectedId, onSelect, motion, lang, demo, farewellAt, ended }: StageProps) {
   const t = dict[lang];
   const order = session?.order ?? [];
   const agents = session?.agents ?? {};
@@ -57,6 +80,12 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
   agentsRef.current = agents;
   const sessionId = session?.id;
   useEffect(() => setChoreo({}), [sessionId]);
+  // When the session is over, subagents that never reported back (Claude Code stopped mid-task, so no SubagentStop
+  // will come) go home too, after the goodbye. Visual only: their recorded status stays as it is.
+  const endedRef = useRef(ended);
+  endedRef.current = ended;
+  const farewellAtRef = useRef(farewellAt);
+  farewellAtRef.current = farewellAt;
 
   useEffect(() => {
     const walkDur = (dx: number) => (motion ? Math.max(500, Math.abs(dx) / WALK_SPEED) : 0);
@@ -75,8 +104,9 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
           const c = next[id];
           const desk = slotOf(id);
           const finished = a.status === 'completed' || a.status === 'failed';
+          const sentHome = !finished && !!endedRef.current && farewellStep(farewellAtRef.current, now) === undefined;
           if (!c) {
-            if (finished && now - a.updatedAt > STALE_MS) set(id, 'gone');
+            if ((finished || endedRef.current) && now - a.updatedAt > STALE_MS) set(id, 'gone');
             else set(id, 'arrive', motion ? 700 : 0);
             continue;
           }
@@ -85,7 +115,10 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
           switch (c.phase) {
             case 'arrive': set(id, 'toDesk', walkDur(desk - SPAWN_X), SPAWN_X); break;
             case 'toDesk': set(id, 'atDesk'); break;
-            case 'atDesk': if (finished) set(id, 'toManager', walkDur(desk - REPORT_X), desk); break;
+            case 'atDesk':
+              if (finished) set(id, 'toManager', walkDur(desk - REPORT_X), desk);
+              else if (sentHome) set(id, 'standUp', motion ? 400 : 0);
+              break;
             case 'toManager': set(id, 'atManager', motion ? 1200 : 600); break;
             case 'atManager': {
               const success = a.outcome === 'success_estimated';
@@ -114,6 +147,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
   const highfiving = onStage.some((id) => choreo[id]?.phase === 'highfive');
   const bowing = onStage.some((id) => choreo[id]?.phase === 'bow');
   const summary = session ? summarize(session) : { active: 0, completed: 0, failed: 0 };
+  const fw = farewellStep(farewellAt, Date.now());
 
   // Position of each subagent figure for its phase.
   const placed = onStage.map((id, idx) => {
@@ -142,7 +176,11 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
       case 'fade': x = qx; y = AISLE_Y; front = true; facing = -1; break;
       default: break;
     }
-    return { id, a, x, y, front, walking, facing, dur, phase: c?.phase };
+    // Goodbye: everyone still in the office (not already fading out) faces the viewer; those at a desk stand up tall
+    // behind it (the move is the mover's CSS transition), those in the aisle stop where they are headed.
+    const farewell = fw !== undefined && c?.phase !== 'fade';
+    if (farewell) { if (!front) y = DESK_FIG_Y - FW_RISE; walking = false; facing = 1; dur = motion ? 400 : 0; }
+    return { id, a, x, y, front, walking, facing, dur, phase: c?.phase, farewell };
   });
 
   const fig = (p: (typeof placed)[number]) => {
@@ -159,6 +197,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
     const leaving = p.phase === 'standUp' || p.phase === 'leave' || p.phase === 'bow' || p.phase === 'fade';
     if (leaving) { bubble = undefined; face = 'smile'; pose = 'stand'; }
     if (p.phase === 'bow' || p.phase === 'fade') pose = 'bow';
+    if (p.farewell && fw) { bubble = undefined; pose = farewellPose(fw); face = fw === 'wave' ? 'happy' : 'smile'; }
     const fading = p.phase === 'fade';
     return (
       <g
@@ -176,13 +215,13 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
           lang={lang}
           pose={pose}
           face={face}
-          sweat={e.sweat && !p.walking}
+          sweat={e.sweat && !p.walking && !p.farewell}
           walking={p.walking}
           motion={motion}
           facing={p.facing}
           bubble={bubble}
-          busy={e.busy && !p.walking}
-          sparkle={p.phase === 'highfive'}
+          busy={e.busy && !p.walking && !p.farewell}
+          sparkle={p.phase === 'highfive' && !p.farewell}
         />
       </g>
     );
@@ -190,6 +229,33 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
 
   const manager = agents[MANAGER_ID];
   const mgrExpr: Expression | undefined = manager ? expressionOf(manager) : undefined;
+  // The manager stands behind the desk; during the goodbye it stands up tall (a short rise animation) and, once the
+  // session is over, stays up waving until a session starts again.
+  const waving = !fw && !!ended;
+  const goodbye = !!fw || waving;
+  const managerFig = () =>
+    manager && mgrExpr ? (
+      <g transform={`translate(${MGR_X}, ${goodbye ? DESK_FIG_Y - FW_RISE : DESK_FIG_Y})`}>
+        <g className={fw === 'up' && motion ? 'farewell-rise' : undefined}>
+          <FigureButton
+            agent={manager}
+            selected={selectedId === MANAGER_ID}
+            onSelect={onSelect}
+            lang={lang}
+            pose={fw ? farewellPose(fw) : waving ? 'wave' : highfiving ? 'highfive' : bowing ? 'wave' : mgrExpr.pose}
+            face={fw ? (fw === 'wave' ? 'happy' : 'smile') : waving ? 'happy' : highfiving ? 'happy' : bowing ? 'smile' : mgrExpr.face}
+            sweat={mgrExpr.sweat && !bowing && !goodbye}
+            walking={false}
+            motion={motion}
+            facing={1}
+            bubble={highfiving || bowing || goodbye ? undefined : mgrExpr.bubble}
+            busy={mgrExpr.busy && !goodbye}
+            manager
+            sparkle={false}
+          />
+        </g>
+      </g>
+    ) : null;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="group" aria-label={t.office}>
@@ -219,26 +285,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
       {/* manager area */}
       <ellipse className="rug" cx={MGR_X + 20} cy={438} rx={230} ry={40} />
       <DeskBack x={MGR_X} w={250} manager />
-      {manager && mgrExpr ? (
-        <g transform={`translate(${MGR_X}, ${DESK_FIG_Y})`}>
-          <FigureButton
-            agent={manager}
-            selected={selectedId === MANAGER_ID}
-            onSelect={onSelect}
-            lang={lang}
-            pose={highfiving ? 'highfive' : bowing ? 'wave' : mgrExpr.pose}
-            face={highfiving ? 'happy' : bowing ? 'smile' : mgrExpr.face}
-            sweat={mgrExpr.sweat && !bowing}
-            walking={false}
-            motion={motion}
-            facing={1}
-            bubble={highfiving || bowing ? undefined : mgrExpr.bubble}
-            busy={mgrExpr.busy}
-            manager
-            sparkle={false}
-          />
-        </g>
-      ) : null}
+      {managerFig()}
       <DeskFront x={MGR_X} w={250} label={t.manager} manager />
 
       {/* subagent desks with seated figures */}
@@ -254,7 +301,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo }: Sta
       {/* walking / reporting figures in front of desks */}
       {placed.filter((p) => p.front).map(fig)}
 
-      {highfiving ? (
+      {highfiving && !fw ? (
         <g className="sparkle" transform={`translate(${(MGR_X + REPORT_X) / 2 + 2}, ${AISLE_Y - 200})`}>
           <path d="M0 -26 v-16 M-18 -16 l-10 -10 M18 -16 l10 -10" className="facestroke" style={{ stroke: 'var(--warn)' }} />
         </g>

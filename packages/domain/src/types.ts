@@ -105,6 +105,8 @@ export interface SessionState {
   permissionMode?: string;
   startedAt: number;
   endedAt?: number;
+  /** SessionEnd's reason as Claude Code reported it (e.g. "prompt_input_exit" for /exit, "clear" for /clear). */
+  endReason?: string;
   /** True when we saw the session's start; false when we joined mid-session. */
   sawStart: boolean;
   agents: Record<string, AgentState>;

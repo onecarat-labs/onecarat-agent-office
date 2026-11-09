@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MANAGER_ID, type SessionState } from '@onecarat/domain';
 import { useLiveFeed } from './live/useLiveFeed.ts';
 import { useTerminal } from './live/useTerminal.ts';
 import { authHeaders } from './live/token.ts';
-import { Stage, useStageKeyboard } from './office/Stage.tsx';
+import { FAREWELL_MS, Stage, useStageKeyboard } from './office/Stage.tsx';
 import { ConsolePanel, MaxToggle, TerminalPanel } from './panels.tsx';
 import { useDemoPlayer } from './demo/useDemoPlayer.ts';
 import { IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
@@ -75,12 +75,51 @@ export function App() {
   const term = useTerminal(liveOk);
 
   const [pinnedSession, setPinnedSession] = useState<string | undefined>(undefined);
+  // Goodbye after "Stop Claude Code": keeps the stage on the session that was shown while the figures bow and wave.
+  const [farewell, setFarewell] = useState<{ at: number; sessionId?: string } | undefined>(undefined);
+  useEffect(() => {
+    if (!farewell) return;
+    const tm = setTimeout(() => setFarewell(undefined), FAREWELL_MS);
+    return () => clearTimeout(tm);
+  }, [farewell]);
   const sessionsByActivity = [...state.sessionOrder].sort((a, b) => lastActivity(state.sessions[b]) - lastActivity(state.sessions[a]));
   // Auto-follow prefers the session running in the built-in terminal (ask and watch on one screen).
   const embedded = liveOk && term.state?.sessionId && state.sessions[term.state.sessionId] ? term.state.sessionId : undefined;
-  const sessionId = pinnedSession && state.sessions[pinnedSession] ? pinnedSession : embedded ?? sessionsByActivity[0];
+  const held = farewell?.sessionId && state.sessions[farewell.sessionId] ? farewell.sessionId : undefined;
+  const sessionId = held ?? (pinnedSession && state.sessions[pinnedSession] ? pinnedSession : embedded ?? sessionsByActivity[0]);
   const cwds = [...new Set([term.state?.cwd, ...sessionsByActivity.map((id) => state.sessions[id]?.cwd)].filter((c): c is string => !!c))];
   const session = sessionId ? state.sessions[sessionId] : undefined;
+
+  // Goodbye triggers: the Stop button, the built-in claude ending normally (/exit), and a SessionEnd of the shown
+  // session from any terminal (except /clear, which ends and restarts the conversation). One goodbye per session
+  // within a short window, so a stop followed by its SessionEnd does not bow twice.
+  const lastGoodbye = useRef(new Map<string, number>());
+  const sayGoodbye = useCallback((sid: string | undefined) => {
+    const now = Date.now();
+    const key = sid ?? '';
+    if (now - (lastGoodbye.current.get(key) ?? 0) < FAREWELL_MS + 5000) return;
+    lastGoodbye.current.set(key, now);
+    setFarewell({ at: now, sessionId: sid });
+  }, []);
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
+  const termRunning = !!term.state?.running;
+  const termExit = term.state?.exitCode;
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !termRunning && termExit === 0) sayGoodbye(sessionIdRef.current);
+    wasRunning.current = termRunning;
+  }, [termRunning, termExit, sayGoodbye]);
+  // The shown session is over: SessionEnd seen (not /clear), or it ran in the built-in terminal that has stopped
+  // (a stop from the button may end claude before its SessionEnd hook is delivered).
+  const sessionOver = !isDemo && !!session && ((session.endedAt !== undefined && session.endReason !== 'clear') || (liveOk && !!term.state && !term.state.running && term.state.sessionId === session.id));
+  const endedAt = isDemo ? undefined : session?.endedAt;
+  const endReason = session?.endReason;
+  useEffect(() => {
+    if (endedAt === undefined || endReason === 'clear') return;
+    if (Date.now() - endedAt > 5000) return; // history replayed on (re)connect, not a fresh exit
+    sayGoodbye(sessionIdRef.current);
+  }, [endedAt, endReason, sayGoodbye]);
 
   const [selectedId, setSelectedId] = useState<string>(MANAGER_ID);
   const onSelect = useCallback((id: string) => setSelectedId(id), []);
@@ -193,13 +232,13 @@ export function App() {
       <main className={`main${maxPane ? ` max-${maxPane}` : ''}`}>
         <div className="stage" onKeyDown={onStageKey}>
           <MaxToggle on={maxPane === 'stage'} onToggle={() => toggleMax('stage')} lang={lang} className="stage-max" />
-          <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onSelect} motion={motion} lang={lang} demo={isDemo} /></div>
+          <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onSelect} motion={motion} lang={lang} demo={isDemo} farewellAt={farewell?.at} ended={sessionOver} /></div>
           {isDemo ? <div className="demo-ribbon">{t.demoRibbon}</div> : null}
           {!isDemo && live.status === 'locked' ? <div className="live-waiting">{t.locked}</div> : null}
           {!isDemo && live.status !== 'locked' && !session ? <div className="live-waiting">{t.liveWaiting}</div> : null}
         </div>
         <div className="bottom">
-          <TerminalPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} />
+          <TerminalPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => sayGoodbye(sessionId)} />
           <ConsolePanel session={session} selectedId={selectedId} onSelect={onSelect} lang={lang} max={maxPane === 'console'} onMax={() => toggleMax('console')} />
         </div>
       </main>

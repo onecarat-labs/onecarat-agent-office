@@ -96,11 +96,11 @@ function reduceSession(s: SessionState, ev: OfficeEvent): SessionState {
   switch (ev.type) {
     case 'session.started': {
       setAgent(pushEvidence({ ...manager(), status: 'idle' }, ev, `Session started${ev.origin ? ` (${ev.origin})` : ''}`));
-      return { ...s, agents, sawStart: true, cwd: ev.cwd ?? s.cwd, endedAt: undefined };
+      return { ...s, agents, sawStart: true, cwd: ev.cwd ?? s.cwd, endedAt: undefined, endReason: undefined };
     }
     case 'session.ended': {
       setAgent(pushEvidence({ ...manager(), status: 'idle', activity: undefined }, ev, `Session ended${ev.reason ? ` (${ev.reason})` : ''}`));
-      return { ...s, agents, endedAt: ev.at };
+      return { ...s, agents, endedAt: ev.at, endReason: ev.reason };
     }
     case 'user.prompt': {
       setAgent(pushEvidence({ ...manager(), status: 'working', activity: 'thinking', activityDetail: undefined }, ev, `User: ${preview(ev.text)}`));

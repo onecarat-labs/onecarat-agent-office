@@ -177,6 +177,11 @@ button { font: inherit; color: inherit; }
 /* leaving the office: a short bow from the hip (figure coords: hip at 0,-50) */
 @keyframes bow { 0%,100% { transform: rotate(0deg); } 30%,65% { transform: rotate(26deg); } }
 .bowing { animation: bow 1.4s ease-in-out forwards; transform-box: view-box; transform-origin: 0 -50px; }
+/* saying goodbye when Claude Code is stopped: stand up behind the desk, bow toward the viewer, wave */
+@keyframes bowFront { 0%,100% { transform: scale(1,1); } 30%,65% { transform: scale(1,.74); } }
+.bowing-front { animation: bowFront 1.5s ease-in-out forwards; transform-box: view-box; transform-origin: 0 -50px; }
+@keyframes rise { from { transform: translateY(40px); } to { transform: none; } }
+.farewell-rise { animation: rise .45s cubic-bezier(.2,.8,.3,1.15) both; }
 
 .bubble rect { stroke-width: 2; }
 .bubble text { font: 600 17px var(--font); }
