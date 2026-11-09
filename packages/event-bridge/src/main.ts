@@ -11,7 +11,7 @@ import { newToken } from './security.ts';
 import { readRuntimeFile, removeRuntimeFile, runtimeFilePath, writeRuntimeFile } from './runtime-file.ts';
 import { Terminal, loadPty } from './terminal.ts';
 
-const VERSION = '0.2.2';
+const VERSION = '0.2.3';
 const DEFAULT_PORT = 47821;
 
 const args = process.argv.slice(2);

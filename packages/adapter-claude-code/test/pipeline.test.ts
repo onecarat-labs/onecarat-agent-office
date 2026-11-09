@@ -157,3 +157,16 @@ test('permission mode comes from the main agent hooks only (display only)', () =
   s = feed(s, { hook_event_name: 'UserPromptSubmit', session_id: 'PM', permission_mode: 'default', prompt: 'x' } as HookInput);
   assert.equal(s.sessions.PM?.permissionMode, 'default');
 });
+
+test('SessionEnd keeps its reason (/exit vs /clear, observed in Claude Code); a new start clears it', () => {
+  let s = initialOfficeState;
+  s = feed(s, { hook_event_name: 'SessionStart', session_id: 'E', source: 'startup' } as HookInput);
+  s = feed(s, { hook_event_name: 'SessionEnd', session_id: 'E', reason: 'clear' } as HookInput, 1000);
+  assert.equal(s.sessions.E?.endReason, 'clear');
+  assert.equal(s.sessions.E?.endedAt, 1000);
+  s = feed(s, { hook_event_name: 'SessionStart', session_id: 'E', source: 'clear' } as HookInput);
+  assert.equal(s.sessions.E?.endedAt, undefined);
+  assert.equal(s.sessions.E?.endReason, undefined);
+  s = feed(s, { hook_event_name: 'SessionEnd', session_id: 'E', reason: 'prompt_input_exit' } as HookInput, 2000);
+  assert.equal(s.sessions.E?.endReason, 'prompt_input_exit');
+});

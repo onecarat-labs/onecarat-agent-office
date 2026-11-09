@@ -22,7 +22,7 @@ export function MaxToggle({ on, onToggle, lang, className = '' }: { on: boolean;
 
 type MaxProps = { max: boolean; onMax: () => void };
 
-export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string } & MaxProps) {
+export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax, onStop }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string; onStop?: () => void } & MaxProps) {
   const t = dict[lang];
   const termOk = !!term && term.state?.available !== false;
   const [tab, setTab] = useState<'terminal' | 'history'>('terminal');
@@ -42,12 +42,12 @@ export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax 
         ) : null}
         <MaxToggle on={max} onToggle={onMax} lang={lang} />
       </div>
-      {showTerm ? <TerminalPane term={term!} lang={lang} cwds={cwds} mode={termMode} /> : <HistoryPane session={session} lang={lang} term={term} />}
+      {showTerm ? <TerminalPane term={term!} lang={lang} cwds={cwds} mode={termMode} onStop={onStop} /> : <HistoryPane session={session} lang={lang} term={term} />}
     </section>
   );
 }
 
-function TerminalPane({ term, lang, cwds, mode }: { term: TerminalLink; lang: Lang; cwds: string[]; mode?: string }) {
+function TerminalPane({ term, lang, cwds, mode, onStop }: { term: TerminalLink; lang: Lang; cwds: string[]; mode?: string; onStop?: () => void }) {
   const t = dict[lang];
   const st = term.state;
   const [folder, setFolder] = useState('');
@@ -68,7 +68,7 @@ function TerminalPane({ term, lang, cwds, mode }: { term: TerminalLink; lang: La
           </span>
         ) : null}
         {st?.running ? (
-          <button className="btn" onClick={() => term.send({ t: 'stop' })}>{t.termStop}</button>
+          <button className="btn" onClick={() => { onStop?.(); term.send({ t: 'stop' }); }}>{t.termStop}</button>
         ) : (
           <button className="btn primary" disabled={term.link !== 'open'} onClick={() => startIn()}>{t.termStart}</button>
         )}
