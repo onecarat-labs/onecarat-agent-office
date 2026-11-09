@@ -1,7 +1,12 @@
 // Display-side masking (an extra; the main protection is that nothing is stored). We never show file contents, env values or secrets.
 // This is best-effort for short strings we DO show (commands, paths, error lines).
 
-const SECRET_ASSIGN = /\b([A-Za-z_][A-Za-z0-9_]*(?:key|token|secret|passw(?:or)?d|pwd|auth|credential|cookie|session)[A-Za-z0-9_]*)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi;
+// `KEY=value`, `token: value`, `X-API-Key: value`, `--token=value`, `?token=value`: the name may be the bare keyword and may
+// contain '-' (HTTP header names, CLI flags). The value may be quoted.
+// `auth(?!or\b)` keeps `author:` readable while still catching `authorization:`.
+const SECRET_ASSIGN = /(?<![A-Za-z0-9_])([A-Za-z0-9_-]*(?:key|token|secret|passw(?:or)?d|pwd|auth(?!or\b)|credential|cookie|session)[A-Za-z0-9_-]*)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi;
+// `--token value`: a CLI flag whose name looks secret, followed by its value as the next word.
+const SECRET_FLAG = /(?<![A-Za-z0-9_])(--?[A-Za-z0-9_-]*(?:key|token|secret|passw(?:or)?d|pwd|auth(?!or\b)|credential)[A-Za-z0-9_-]*)\s+("[^"]*"|'[^']*'|[^\s=:-]\S*)/gi;
 const BEARER = /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 // Long runs that mix letters and digits (API keys, hex/base64 tokens). Plain long words and paths are kept readable.
 const LONG_TOKEN = /\b(?=[A-Za-z0-9_+=-]*\d)(?=[A-Za-z0-9_+=-]*[A-Za-z])[A-Za-z0-9_+=-]{32,}\b/g;
@@ -10,8 +15,10 @@ const URL_CREDS = /(\w+:\/\/)[^\s/:@]+:[^\s/@]+@/g;
 
 export function maskSecrets(s: string): string {
   return s
-    .replace(SECRET_ASSIGN, (_m, k: string) => `${k}=***`)
+    // Bearer first: `Authorization: Bearer xxx` would otherwise become `Authorization=*** xxx` (the keyword consumed as the value).
     .replace(BEARER, (_m, k: string) => `${k} ***`)
+    .replace(SECRET_ASSIGN, (_m, k: string) => `${k}=***`)
+    .replace(SECRET_FLAG, (_m, k: string) => `${k} ***`)
     .replace(URL_CREDS, '$1***@')
     .replace(KNOWN_PREFIX, '***')
     .replace(LONG_TOKEN, '***');

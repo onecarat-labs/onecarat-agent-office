@@ -6,7 +6,8 @@ import { authHeaders } from './live/token.ts';
 import { FAREWELL_MS, Stage, useStageKeyboard } from './office/Stage.tsx';
 import { ConsolePanel, MaxToggle, TerminalPanel } from './panels.tsx';
 import { useDemoPlayer } from './demo/useDemoPlayer.ts';
-import { IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
+import { IconConfig, IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
+import { ConfigView } from './config/ConfigView.tsx';
 import { detectLang, dict, type Lang } from './i18n.ts';
 
 type Theme = 'system' | 'light' | 'dark';
@@ -57,6 +58,8 @@ export function App() {
   const [theme, setTheme] = useState<Theme>(() => load<Theme>('office.theme', 'system'));
   const [motionPref, setMotionPref] = useState<Motion>(() => load<Motion>('office.motion', 'system'));
   const [popover, setPopover] = useState<'none' | 'settings' | 'sessions'>('none');
+  // Main area: the office, or the Claude Code configuration view. The office stays mounted (the terminal keeps its session).
+  const [view, setView] = useState<'office' | 'config'>('office');
   // One pane may fill the main area. Hidden panes stay mounted (the terminal keeps its session).
   const [maxPane, setMaxPane] = useState<Pane | undefined>(undefined);
   const toggleMax = (p: Pane) => setMaxPane((cur) => (cur === p ? undefined : p));
@@ -177,9 +180,10 @@ export function App() {
       </header>
 
       <nav className="rail" aria-label="Main">
-        <button className="iconbtn active" aria-current="page" aria-label={t.office} title={t.office} onClick={() => setPopover('none')}><IconHome size={22} /></button>
+        <button className={`iconbtn${view === 'office' ? ' active' : ''}`} aria-current={view === 'office' ? 'page' : undefined} aria-label={t.office} title={t.office} onClick={() => { setPopover('none'); setView('office'); }}><IconHome size={22} /></button>
         <button className="iconbtn" aria-expanded={popover === 'sessions'} aria-label={t.sessions} title={t.sessions} onClick={() => setPopover(popover === 'sessions' ? 'none' : 'sessions')}><IconSessions size={22} /></button>
         <button className="iconbtn" aria-expanded={popover === 'settings'} aria-label={t.settings} title={t.settings} onClick={() => setPopover(popover === 'settings' ? 'none' : 'settings')}><IconSettings size={22} /></button>
+        <button className={`iconbtn${view === 'config' ? ' active' : ''}`} aria-current={view === 'config' ? 'page' : undefined} aria-label={t.cfgTitle} title={t.cfgTitle} onClick={() => { setPopover('none'); setView('config'); }}><IconConfig size={22} /></button>
       </nav>
 
       {popover === 'settings' ? (
@@ -232,7 +236,8 @@ export function App() {
         </div>
       ) : null}
 
-      <main className={`main${maxPane ? ` max-${maxPane}` : ''}`}>
+      {view === 'config' ? <ConfigView lang={lang} cwds={cwds} live={liveOk && !stopped} /> : null}
+      <main className={`main${maxPane ? ` max-${maxPane}` : ''}${view === 'config' ? ' hidden' : ''}`}>
         <div className="stage" onKeyDown={onStageKey}>
           <MaxToggle on={maxPane === 'stage'} onToggle={() => toggleMax('stage')} lang={lang} className="stage-max" />
           <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onSelect} motion={motion} lang={lang} demo={isDemo} farewellAt={farewell?.at} ended={sessionOver} /></div>

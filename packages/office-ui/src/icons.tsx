@@ -49,3 +49,4 @@ export const LogoMark = ({ size = 28 }: P) => (
     <GemMark gid="lm" />
   </svg>
 );
+export const IconConfig = (p: P) => (<S {...p}><path d="M6 3.5h8l4 4v13H6z" /><path d="M14 3.5v4h4" /><path d="M9 12h6M9 15.5h6M9 19h3.5" /></S>);

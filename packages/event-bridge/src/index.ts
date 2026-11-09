@@ -6,3 +6,4 @@ export * from './receiver.ts';
 export * from './terminal.ts';
 export * from './child-env.ts';
 export * from './claude-path.ts';
+export * from './config-scan.ts';

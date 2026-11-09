@@ -67,6 +67,7 @@ bridge (127.0.0.1:47821, memory only) ── events ──▶ Office UI in your 
 
 - **Office never calls a model.** No Anthropic API, Agent SDK or `claude -p`, so **it adds no extra cost.** Like any plugin skill, its short skill description (a few dozen tokens) is part of each session's context.
 - It **never reads credentials** (`~/.claude/.credentials.json` etc.).
+- The **Claude Code configuration** view (file icon on the left) lists every place Claude Code reads settings from, with what each is for, and shows the current content **read-only** when you open it. Secret-looking values and everything under `env`/`headers` are hidden; from `~/.claude.json` only the MCP servers and the current project's permissions are read. Office never edits these files: ask Claude Code to change them.
 
 See [docs/architecture.md](docs/architecture.md) and [docs/security.md](docs/security.md).
 
