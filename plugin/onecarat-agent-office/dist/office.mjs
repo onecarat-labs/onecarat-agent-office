@@ -3,10 +3,10 @@
 import { createRequire as __officeCreateRequire } from 'node:module'; const require = __officeCreateRequire(import.meta.url);
 
 // packages/launcher/src/cli.ts
-import fs4 from "node:fs";
-import http from "node:http";
-import path4 from "node:path";
-import { spawn } from "node:child_process";
+import fs5 from "node:fs";
+import http2 from "node:http";
+import path5 from "node:path";
+import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // packages/event-bridge/src/runtime-file.ts
@@ -69,6 +69,10 @@ function childEnv(env = process.env, extra = {}) {
 import fs2 from "node:fs";
 import path2 from "node:path";
 var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+function systemRoot(env = process.env) {
+  const v = envGet(env, "SYSTEMROOT") ?? envGet(env, "WINDIR");
+  return v && /^[A-Za-z]:[\\/]/.test(v) && !v.includes('"') ? v : "C:\\Windows";
+}
 function envGet(env, name) {
   const k = Object.keys(env).find((x) => x.toUpperCase() === name);
   return k ? env[k] : void 0;
@@ -94,9 +98,103 @@ function resolveClaude(env = process.env, platform = process.platform) {
   return void 0;
 }
 
-// packages/launcher/src/args.ts
+// packages/event-bridge/src/proof.ts
+import crypto from "node:crypto";
+import http from "node:http";
+function healthProof(token, nonce) {
+  return crypto.createHmac("sha256", token).update(`office-health:${nonce}`).digest("hex");
+}
+function proofMatches(given, token, nonce) {
+  const want = healthProof(token, nonce);
+  return typeof given === "string" && given.length === want.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(want));
+}
+function askOffice(port, token, timeoutMs = 800) {
+  return new Promise((resolve) => {
+    const nonce = crypto.randomBytes(16).toString("hex");
+    const req = http.get({ host: "127.0.0.1", port, path: "/api/health", timeout: timeoutMs, headers: { "x-office-token": token, "x-office-nonce": nonce } }, (res) => {
+      const c = [];
+      let size = 0;
+      res.on("data", (d) => {
+        size += d.length;
+        if (size > 64 * 1024) req.destroy();
+        else c.push(d);
+      });
+      res.on("error", () => resolve({ ok: false }));
+      res.on("end", () => {
+        try {
+          const j = JSON.parse(Buffer.concat(c).toString());
+          const ok = !!j && typeof j === "object" && j.app === "onecarat-agent-office" && proofMatches(j.proof, token, nonce);
+          resolve(ok ? { ok, body: j } : { ok: false });
+        } catch {
+          resolve({ ok: false });
+        }
+      });
+    });
+    req.on("error", () => resolve({ ok: false }));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ ok: false });
+    });
+  });
+}
+
+// packages/event-bridge/src/open-browser.ts
+import crypto2 from "node:crypto";
 import fs3 from "node:fs";
+import os2 from "node:os";
 import path3 from "node:path";
+import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
+var HANDOFF_PREFIX = "onecarat-agent-office-open-";
+var HANDOFF_LIFETIME_MS = 2e4;
+function browserCommand(target, platform = process.platform, env = process.env) {
+  if (platform === "win32") return { file: path3.win32.join(systemRoot(env), "System32", "rundll32.exe"), args: ["url.dll,FileProtocolHandler", target] };
+  if (platform === "darwin") return { file: "/usr/bin/open", args: [target] };
+  return { file: "xdg-open", args: [target] };
+}
+function handoffHtml(url) {
+  const js = JSON.stringify(url).replace(/</g, "\\u003c");
+  return `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Onecarat Agent Office</title><script>location.replace(${js})</script>
+`;
+}
+function handoffDir(platform = process.platform, env = process.env) {
+  return platform === "darwin" ? runtimeDir(env, platform) : os2.homedir();
+}
+function writeHandoff(url, dir, startCleaner = true) {
+  fs3.mkdirSync(dir, { recursive: true, mode: 448 });
+  for (const n of fs3.readdirSync(dir)) {
+    if (!n.startsWith(HANDOFF_PREFIX) || !n.endsWith(".html")) continue;
+    try {
+      const f = path3.join(dir, n);
+      if (Date.now() - fs3.statSync(f).mtimeMs > HANDOFF_LIFETIME_MS) fs3.unlinkSync(f);
+    } catch {
+    }
+  }
+  const file = path3.join(dir, `${HANDOFF_PREFIX}${crypto2.randomBytes(8).toString("hex")}.html`);
+  fs3.writeFileSync(file, handoffHtml(url), { mode: 384, flag: "wx" });
+  if (startCleaner) {
+    const cleaner = `setTimeout(()=>{try{require('node:fs').unlinkSync(process.argv[1])}catch{}},${HANDOFF_LIFETIME_MS})`;
+    spawn(process.execPath, ["-e", cleaner, file], { detached: true, stdio: "ignore" }).unref();
+  }
+  return file;
+}
+function openWithKey(url, platform = process.platform, env = process.env) {
+  try {
+    const target = platform === "win32" ? url : pathToFileURL(writeHandoff(url, handoffDir(platform, env))).href;
+    const { file, args } = browserCommand(target, platform, env);
+    const child = spawn(file, args, { detached: true, stdio: "ignore" });
+    child.on("error", () => {
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// packages/launcher/src/args.ts
+import fs4 from "node:fs";
+import path4 from "node:path";
 var COMMANDS = ["check", "start", "stop", "status", "open"];
 function parseLauncherArgs(argv, exists = (d) => isDir(d)) {
   const [first = "status", ...rest] = argv;
@@ -113,7 +211,7 @@ function parseLauncherArgs(argv, exists = (d) => isDir(d)) {
     } else if (a === "--cwd") {
       const v = rest[++i];
       if (!v) return { error: "--cwd needs a folder" };
-      const dir = path3.resolve(v);
+      const dir = path4.resolve(v);
       if (!exists(dir)) return { error: `--cwd: not a folder: ${dir}` };
       out.cwd = dir;
     } else return { error: `unknown option: ${a}` };
@@ -128,7 +226,7 @@ function bridgeArgs(a, defaultCwd) {
 }
 function isDir(d) {
   try {
-    return fs3.statSync(d).isDirectory();
+    return fs4.statSync(d).isDirectory();
   } catch {
     return false;
   }
@@ -136,10 +234,10 @@ function isDir(d) {
 
 // packages/launcher/src/cli.ts
 var MIN_NODE_MAJOR = 18;
-var here = path4.dirname(fileURLToPath(import.meta.url));
-var bundledBridge = path4.join(here, "bridge.mjs");
-var devBridge = path4.resolve(here, "../../event-bridge/src/main.ts");
-var bridgeEntry = fs4.existsSync(bundledBridge) ? bundledBridge : devBridge;
+var here = path5.dirname(fileURLToPath(import.meta.url));
+var bundledBridge = path5.join(here, "bridge.mjs");
+var devBridge = path5.resolve(here, "../../event-bridge/src/main.ts");
+var bridgeEntry = fs5.existsSync(bundledBridge) ? bundledBridge : devBridge;
 var parsed = parseLauncherArgs(process.argv.slice(2));
 if ("error" in parsed) {
   console.error(parsed.error);
@@ -147,27 +245,11 @@ if ("error" in parsed) {
   process.exit(2);
 }
 var opts = parsed;
-function health(port, token, timeoutMs = 800) {
-  return new Promise((resolve) => {
-    const headers = token ? { "x-office-token": token } : void 0;
-    const req = http.get({ host: "127.0.0.1", port, path: "/api/health", timeout: timeoutMs, headers }, (res) => {
-      const c = [];
-      res.on("data", (d) => c.push(d));
-      res.on("end", () => {
-        try {
-          const j = JSON.parse(Buffer.concat(c).toString());
-          resolve({ ok: j.app === "onecarat-agent-office", events: j.events, clients: j.clients, terminal: j.terminal });
-        } catch {
-          resolve({ ok: false });
-        }
-      });
-    });
-    req.on("error", () => resolve({ ok: false }));
-    req.on("timeout", () => {
-      req.destroy();
-      resolve({ ok: false });
-    });
-  });
+async function health(port, token, timeoutMs = 800) {
+  const a = await askOffice(port, token, timeoutMs);
+  if (!a.ok || !a.body) return { ok: false };
+  const j = a.body;
+  return { ok: true, events: j.events, clients: j.clients, terminal: j.terminal };
 }
 function pidAlive(pid) {
   try {
@@ -180,24 +262,17 @@ function pidAlive(pid) {
 async function running() {
   const info = readRuntimeFile();
   if (!info) return void 0;
-  if ((await health(info.port)).ok) return info;
+  if ((await health(info.port, info.token)).ok) return info;
   removeRuntimeFile(info.pid);
   return void 0;
 }
 function openOffice(info) {
-  openBrowser(`http://127.0.0.1:${info.port}/#t=${info.token}`);
+  if (!openWithKey(`http://127.0.0.1:${info.port}/#t=${info.token}`)) console.error("Could not open the browser.");
 }
 function terminalLine(h) {
   if (!h.terminal) return "";
   if (!h.terminal.available) return `  Terminal: unavailable (${h.terminal.reason}). Office is read-only; use Claude Code in your own terminal.`;
   return `  Terminal: claude ${h.terminal.running ? "running" : "starts"} in ${h.terminal.cwd}${h.terminal.claudePath ? ` (${h.terminal.claudePath})` : ""}`;
-}
-function openBrowser(url) {
-  const [c, ...a] = process.platform === "win32" ? ["rundll32.exe", "url.dll,FileProtocolHandler", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
-  try {
-    spawn(c, a, { detached: true, stdio: "ignore" }).unref();
-  } catch {
-  }
 }
 var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function start() {
@@ -208,7 +283,7 @@ async function start() {
     return;
   }
   const args = [bridgeEntry, ...bridgeArgs(opts, process.cwd())];
-  const child = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: childEnv() });
+  const child = spawn2(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true, env: childEnv() });
   child.unref();
   for (let i = 0; i < 40; i++) {
     await sleep(150);
@@ -239,7 +314,7 @@ async function stop() {
     return;
   }
   await new Promise((resolve) => {
-    const req = http.request(
+    const req = http2.request(
       { host: "127.0.0.1", port: info.port, path: "/api/shutdown", method: "POST", timeout: 1500, headers: { "x-office-token": info.token } },
       (res) => {
         res.resume();
@@ -280,8 +355,8 @@ function check() {
   console.log(`Node.js ${process.versions.node} (${process.platform}/${process.arch}) \u2014 ${ok ? "OK" : `too old, need ${MIN_NODE_MAJOR}+`}`);
   console.log(`Bridge: ${bridgeEntry}`);
   const plat = `${process.platform}-${process.arch}`;
-  const vendor = [path4.join(here, "vendor/node-pty"), path4.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")].find((d) => fs4.existsSync(d));
-  const term = vendor && fs4.existsSync(path4.join(vendor, "prebuilds", plat));
+  const vendor = [path5.join(here, "vendor/node-pty"), path5.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")].find((d) => fs5.existsSync(d));
+  const term = vendor && fs5.existsSync(path5.join(vendor, "prebuilds", plat));
   const claude = resolveClaude();
   console.log(`Built-in terminal: ${term ? `available (${plat})` : `not available for ${plat} \u2014 Office runs read-only`}`);
   console.log(`claude: ${claude ?? "not found on PATH \u2014 the built-in terminal cannot start it"}`);

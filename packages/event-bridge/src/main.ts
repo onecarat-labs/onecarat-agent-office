@@ -3,16 +3,16 @@
 // It never calls a model, never reads Claude credentials, and keeps events and terminal output in memory only.
 import fs from 'node:fs';
 import os from 'node:os';
-import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawn } from 'node:child_process';
 import { createBridge } from './server.ts';
 import { newToken } from './security.ts';
 import { readRuntimeFile, removeRuntimeFile, runtimeFilePath, writeRuntimeFile } from './runtime-file.ts';
 import { Terminal, loadPty, whenTerminalEnds } from './terminal.ts';
+import { askOffice } from './proof.ts';
+import { openWithKey } from './open-browser.ts';
 
-const VERSION = '0.2.5';
+const VERSION = '0.2.6';
 const DEFAULT_PORT = 47821;
 
 const args = process.argv.slice(2);
@@ -44,10 +44,10 @@ const ptyCandidates = [path.join(here, 'vendor', 'node-pty'), path.resolve(here,
 const termCwd = path.resolve(opt('cwd') ?? process.cwd());
 const devOrigins = devOrigin ? [devOrigin.replace(/\/$/, '')] : [];
 
-// Another bridge running? Trust the runtime file only if something at that port answers as Office
-// (a stale file whose pid was reused by an unrelated process must not block the start).
+// Another bridge running? Trust the runtime file only if something at that port proves it holds that file's
+// token (a stale file whose pid was reused, or whose port was taken by something else, must not block the start).
 const existing = readRuntimeFile();
-if (existing && existing.pid !== process.pid && isAlive(existing.pid) && (await isOffice(existing.port, existing.token))) {
+if (existing && existing.pid !== process.pid && isAlive(existing.pid) && (await askOffice(existing.port, existing.token)).ok) {
   console.error(`Onecarat Agent Office is already running (pid ${existing.pid}) at http://127.0.0.1:${existing.port}/`);
   process.exit(3);
 }
@@ -80,7 +80,7 @@ bridge.server.listen(port, '127.0.0.1', () => {
   console.log(`  terminal: ${t.available ? `available (${t.claudePath} starts in ${termCwd})` : `unavailable — ${t.reason}; Office runs read-only`}`);
   console.log(`  runtime:  ${runtimeFilePath()}`);
   console.log('  Events and terminal output are kept in memory only. Press Ctrl+C to stop.');
-  if (!bundled && flag('open')) openBrowser(`${openBase ?? url}#t=${token}`);
+  if (!bundled && flag('open')) openWithKey(`${openBase ?? url}#t=${token}`);
 });
 
 let stopping = false;
@@ -111,31 +111,4 @@ function isAlive(pid: number): boolean {
   } catch {
     return false;
   }
-}
-
-function isOffice(p: number, t: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const req = http.get({ host: '127.0.0.1', port: p, path: '/api/health', timeout: 800, headers: { 'x-office-token': t } }, (res) => {
-      let s = '';
-      res.on('data', (d) => (s += d));
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(s).app === 'onecarat-agent-office');
-        } catch {
-          resolve(false);
-        }
-      });
-    });
-    req.on('error', () => resolve(false));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve(false);
-    });
-  });
-}
-
-// Windows: explorer.exe drops the URL fragment (#t=…) (measured); the URL protocol handler keeps it.
-function openBrowser(url: string) {
-  const [cmd, ...a] = process.platform === 'win32' ? ['rundll32.exe', 'url.dll,FileProtocolHandler', url] : process.platform === 'darwin' ? ['open', url] : ['xdg-open', url];
-  spawn(cmd!, a, { detached: true, stdio: 'ignore' }).unref();
 }

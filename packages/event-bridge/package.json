@@ -7,7 +7,9 @@
     ".": "./src/index.ts",
     "./runtime-file": "./src/runtime-file.ts",
     "./child-env": "./src/child-env.ts",
-    "./claude-path": "./src/claude-path.ts"
+    "./claude-path": "./src/claude-path.ts",
+    "./proof": "./src/proof.ts",
+    "./open-browser": "./src/open-browser.ts"
   },
   "bin": {
     "onecarat-office-bridge": "./src/main.ts"

@@ -9,6 +9,8 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { CSP, SECURITY_HEADERS, crossSite, hostAllowed, looksLikeBrowser, protocolToken, tokenMatches, WS_PROTOCOL } from './security.ts';
 import type { Terminal, TerminalMessage } from './terminal.ts';
 import { scanConfig } from './config-scan.ts';
+import { NONCE_RE, healthProof } from './proof.ts';
+import { isLocalDir } from './local-dir.ts';
 
 export interface BridgeOptions {
   port: number;
@@ -107,7 +109,10 @@ export function createBridge(opts: BridgeOptions): Bridge {
     const authed = tokenMatches(req.headers['x-office-token'], opts.token);
     if (url.pathname === '/api/health' && req.method === 'GET') {
       // Without the token: only "is this Office?" (the page asks before it has a token). No data.
-      const base = { ok: true, app: 'onecarat-agent-office', version: opts.version, authed };
+      // A caller that sends a nonce gets HMAC(token, nonce) back: proof that this is the Office that wrote the
+      // runtime file, not something else that took the port after a crash (see proof.ts). The token is not revealed.
+      const nonce = header(req, 'x-office-nonce');
+      const base = { ok: true, app: 'onecarat-agent-office', version: opts.version, authed, ...(nonce && NONCE_RE.test(nonce) ? { proof: healthProof(opts.token, nonce) } : {}) };
       if (!authed) return send(res, 200, JSON.stringify(base));
       const terminal = opts.terminal?.state ?? { available: false, reason: 'disabled', running: false };
       return send(res, 200, JSON.stringify({ ...base, events: store.size, clients: broadcaster.count, received: stats.received, terminal }));
@@ -135,7 +140,8 @@ export function createBridge(opts: BridgeOptions): Bridge {
       const asked = url.searchParams.get('cwd');
       let cwd = opts.config.defaultCwd;
       if (asked) {
-        if (!path.isAbsolute(asked) || asked.includes('\0') || !fs.statSync(asked, { throwIfNoEntry: false })?.isDirectory()) return send(res, 400, '{"error":"bad cwd"}');
+        // Absolute and local only: a UNC path would make this computer contact another machine.
+        if (!isLocalDir(asked)) return send(res, 400, '{"error":"bad cwd"}');
         cwd = asked;
       }
       return send(res, 200, JSON.stringify(scanConfig({ cwd, home: opts.config.home, configDir: opts.config.configDir, managedDir: opts.config.managedDir })));
@@ -226,18 +232,20 @@ function attachTerminal(ws: WebSocket, term: Terminal) {
   if (back) out({ t: 'out', d: back });
   const off = term.subscribe(out);
   ws.on('message', (raw) => {
-    let m: ClientMessage;
+    // Nothing a client sends may take the bridge down: an exception here would be an uncaught one.
     try {
-      m = JSON.parse(String(raw)) as ClientMessage;
+      const m = JSON.parse(String(raw)) as ClientMessage | null;
+      if (!m || typeof m !== 'object') return;
+      if (m.t === 'in' && typeof m.d === 'string') term.write(m.d);
+      else if (m.t === 'resize') term.resize(m.cols, m.rows);
+      else if (m.t === 'start') {
+        const err = term.start(typeof m.cwd === 'string' && m.cwd ? m.cwd : undefined);
+        if (err) out({ t: 'state', state: { ...term.state, reason: err } });
+      } else if (m.t === 'stop') term.stop();
     } catch {
-      return;
+      /* malformed message: ignored */
     }
-    if (m.t === 'in' && typeof m.d === 'string') term.write(m.d);
-    else if (m.t === 'resize') term.resize(m.cols, m.rows);
-    else if (m.t === 'start') {
-      const err = term.start(typeof m.cwd === 'string' && m.cwd ? m.cwd : undefined);
-      if (err) out({ t: 'state', state: { ...term.state, reason: err } });
-    } else if (m.t === 'stop') term.stop();
   });
+  ws.on('error', () => ws.terminate());
   ws.on('close', off);
 }

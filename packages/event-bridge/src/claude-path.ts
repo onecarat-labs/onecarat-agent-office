@@ -9,6 +9,12 @@ import path from 'node:path';
 
 const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD';
 
+/** The Windows folder, absolute. A missing or odd SystemRoot falls back to the standard location. */
+export function systemRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const v = envGet(env, 'SYSTEMROOT') ?? envGet(env, 'WINDIR');
+  return v && /^[A-Za-z]:[\\/]/.test(v) && !v.includes('"') ? v : 'C:\\Windows';
+}
+
 function envGet(env: NodeJS.ProcessEnv, name: string): string | undefined {
   const k = Object.keys(env).find((x) => x.toUpperCase() === name);
   return k ? env[k] : undefined;
@@ -50,7 +56,10 @@ export interface SpawnSpec {
 export function claudeCommand(exe: string, sessionId: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): SpawnSpec {
   if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new Error('bad session id');
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(exe)) {
-    return { file: envGet(env, 'COMSPEC') || 'cmd.exe', args: `/d /s /c ""${exe}" --session-id ${sessionId}"` };
+    // cmd.exe by absolute path: a bare name would be looked up in the working folder first.
+    const comspec = envGet(env, 'COMSPEC');
+    const cmd = comspec && /^[A-Za-z]:[\\/]/.test(comspec) ? comspec : path.win32.join(systemRoot(env), 'System32', 'cmd.exe');
+    return { file: cmd, args: `/d /s /c ""${exe}" --session-id ${sessionId}"` };
   }
   return { file: exe, args: ['--session-id', sessionId] };
 }
