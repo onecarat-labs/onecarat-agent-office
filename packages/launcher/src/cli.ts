@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { readRuntimeFile, removeRuntimeFile, type RuntimeInfo } from '@onecarat/event-bridge/runtime-file';
 import { childEnv } from '@onecarat/event-bridge/child-env';
 import { resolveClaude } from '@onecarat/event-bridge/claude-path';
+import { askOffice } from '@onecarat/event-bridge/proof';
+import { openWithKey } from '@onecarat/event-bridge/open-browser';
 import { bridgeArgs, parseLauncherArgs } from './args.ts';
 
 const MIN_NODE_MAJOR = 18;
@@ -33,27 +35,15 @@ interface Health {
   terminal?: { available: boolean; reason?: string; running: boolean; cwd: string; claudePath?: string };
 }
 
-function health(port: number, token?: string, timeoutMs = 800): Promise<Health> {
-  return new Promise((resolve) => {
-    const headers = token ? { 'x-office-token': token } : undefined;
-    const req = http.get({ host: '127.0.0.1', port, path: '/api/health', timeout: timeoutMs, headers }, (res) => {
-      const c: Buffer[] = [];
-      res.on('data', (d: Buffer) => c.push(d));
-      res.on('end', () => {
-        try {
-          const j = JSON.parse(Buffer.concat(c).toString());
-          resolve({ ok: j.app === 'onecarat-agent-office', events: j.events, clients: j.clients, terminal: j.terminal });
-        } catch {
-          resolve({ ok: false });
-        }
-      });
-    });
-    req.on('error', () => resolve({ ok: false }));
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ ok: false });
-    });
-  });
+/**
+ * Asks the port from the runtime file. `ok` only when the answer proves it holds that file's token (proof.ts):
+ * the app name alone could be answered by anything that took the port after a crash.
+ */
+async function health(port: number, token: string, timeoutMs = 800): Promise<Health> {
+  const a = await askOffice(port, token, timeoutMs);
+  if (!a.ok || !a.body) return { ok: false };
+  const j = a.body as { events?: number; clients?: number; terminal?: Health['terminal'] };
+  return { ok: true, events: j.events, clients: j.clients, terminal: j.terminal };
 }
 
 function pidAlive(pid: number): boolean {
@@ -69,8 +59,9 @@ function pidAlive(pid: number): boolean {
 async function running(): Promise<RuntimeInfo | undefined> {
   const info = readRuntimeFile();
   if (!info) return undefined;
-  if ((await health(info.port)).ok) return info;
-  // Nothing answers there: a crashed or force-killed bridge left the file behind (even if its pid was reused).
+  if ((await health(info.port, info.token)).ok) return info;
+  // Nothing there proves it holds this file's token: a crashed or force-killed bridge left the file behind (even
+  // if its pid was reused, or something else now listens on that port).
   removeRuntimeFile(info.pid);
   return undefined;
 }
@@ -80,23 +71,13 @@ async function running(): Promise<RuntimeInfo | undefined> {
  * and the page removes it from the address bar at once. It is handed to the browser only, never printed.
  */
 function openOffice(info: { port: number; token: string }) {
-  openBrowser(`http://127.0.0.1:${info.port}/#t=${info.token}`);
+  if (!openWithKey(`http://127.0.0.1:${info.port}/#t=${info.token}`)) console.error('Could not open the browser.');
 }
 
 function terminalLine(h: Health): string {
   if (!h.terminal) return '';
   if (!h.terminal.available) return `  Terminal: unavailable (${h.terminal.reason}). Office is read-only; use Claude Code in your own terminal.`;
   return `  Terminal: claude ${h.terminal.running ? 'running' : 'starts'} in ${h.terminal.cwd}${h.terminal.claudePath ? ` (${h.terminal.claudePath})` : ''}`;
-}
-
-// Windows: explorer.exe drops the URL fragment (#t=…) (measured); the URL protocol handler keeps it.
-function openBrowser(url: string) {
-  const [c, ...a] = process.platform === 'win32' ? ['rundll32.exe', 'url.dll,FileProtocolHandler', url] : process.platform === 'darwin' ? ['open', url] : ['xdg-open', url];
-  try {
-    spawn(c!, a, { detached: true, stdio: 'ignore' }).unref();
-  } catch {
-    /* no browser launcher: the URL is printed anyway */
-  }
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

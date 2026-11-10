@@ -1,4 +1,5 @@
 // Shared logic of the hook forwarder (kept dependency-free and fast to load).
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -12,6 +13,41 @@ export function runtimeFilePath(env = process.env, platform = process.platform) 
     else dir = path.join(env.XDG_STATE_HOME || path.join(home, '.local', 'state'), 'onecarat-agent-office');
   }
   return path.join(dir, 'bridge.json');
+}
+
+/**
+ * A runtime file can outlive its bridge (crash, forced kill, power loss). Such a file must not make the hooks
+ * post prompts to whatever listens on that port now. Cheap checks first, before any connection:
+ * the bridge's process must exist, and the file must not be older than the last boot.
+ */
+export function looksStale(info, { now = Date.now(), uptimeSec = os.uptime(), alive = pidAlive } = {}) {
+  if (!info || typeof info.port !== 'number' || typeof info.token !== 'string') return true;
+  if (typeof info.pid === 'number' && !alive(info.pid)) return true;
+  // Written before this boot (2 minutes of slack for clock adjustments).
+  if (typeof info.startedAt === 'number' && info.startedAt < now - uptimeSec * 1000 - 120_000) return true;
+  return false;
+}
+
+export function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e?.code === 'EPERM'; // exists, but not ours to signal
+  }
+}
+
+/**
+ * The listener must prove it holds the token before anything is posted to it (a pid can be reused).
+ * KEEP IN SYNC with packages/event-bridge/src/proof.ts (healthProof).
+ */
+export function healthProof(token, nonce) {
+  return crypto.createHmac('sha256', token).update(`office-health:${nonce}`).digest('hex');
+}
+
+export function proofMatches(given, token, nonce) {
+  const want = healthProof(token, nonce);
+  return typeof given === 'string' && given.length === want.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(want));
 }
 
 const clip = (v, n) => (typeof v === 'string' ? (v.length > n ? v.slice(0, n) : v) : undefined);

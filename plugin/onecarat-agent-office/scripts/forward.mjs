@@ -2,10 +2,12 @@
 // Claude Code command hook -> Onecarat Agent Office bridge (127.0.0.1).
 // Configure in exec form with async: { "type": "command", "command": "node", "args": ["<this file>"], "async": true, "timeout": 5 }
 // Guarantees: always exits 0 and prints nothing, so Claude Code never shows a hook error and never waits on Office.
-// When Office is not running (no runtime file) it does not even open a connection.
+// When Office is not running (no runtime file, or a stale one) it does not even open a connection.
+// Nothing from the hook is sent until the listener has proved that it is the Office that wrote the runtime file.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
-import { pickHookFields, runtimeFilePath } from './forward-lib.mjs';
+import { looksStale, pickHookFields, proofMatches, runtimeFilePath } from './forward-lib.mjs';
 
 const hookTime = Date.now();
 const done = () => process.exit(0);
@@ -17,7 +19,7 @@ try {
 } catch {
   done();
 }
-if (!info || typeof info.port !== 'number' || typeof info.token !== 'string') done();
+if (looksStale(info)) done();
 
 const chunks = [];
 process.stdin.on('data', (c) => chunks.push(c));
@@ -31,6 +33,39 @@ process.stdin.on('end', () => {
   }
   if (!picked) return done();
   const body = Buffer.from(JSON.stringify(picked));
+  verify(() => post(body));
+});
+
+/** Ask the listener for HMAC(token, nonce). Neither the token nor any hook data is in this request. */
+function verify(then) {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const req = http.get({ host: '127.0.0.1', port: info.port, path: '/api/health', timeout: 1000, headers: { 'x-office-nonce': nonce } }, (res) => {
+    const c = [];
+    let size = 0;
+    res.on('data', (d) => {
+      size += d.length;
+      if (size > 16 * 1024) return done();
+      c.push(d);
+    });
+    res.on('error', done);
+    res.on('end', () => {
+      try {
+        const j = JSON.parse(Buffer.concat(c).toString('utf8'));
+        if (j && j.app === 'onecarat-agent-office' && proofMatches(j.proof, info.token, nonce)) return then();
+      } catch {
+        /* not Office */
+      }
+      done();
+    });
+  });
+  req.on('error', done);
+  req.on('timeout', () => {
+    req.destroy();
+    done();
+  });
+}
+
+function post(body) {
   const req = http.request(
     {
       host: '127.0.0.1',
@@ -56,4 +91,4 @@ process.stdin.on('end', () => {
     done();
   });
   req.end(body);
-});
+}

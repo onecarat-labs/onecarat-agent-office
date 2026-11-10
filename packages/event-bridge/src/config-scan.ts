@@ -110,6 +110,11 @@ function base(id: string, layer: ConfigLayer, kind: ConfigKind, p: string): Conf
 }
 
 function readJson(e: ConfigEntry, limit = MAX_JSON_BYTES): unknown {
+  // Regular files only: reading a pipe or device placed under one of these names would never return.
+  if (!stat(e.path)?.isFile()) {
+    e.error = 'unreadable';
+    return undefined;
+  }
   if ((e.size ?? 0) > limit) {
     e.error = 'too-large';
     return undefined;

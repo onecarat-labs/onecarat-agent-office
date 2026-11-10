@@ -3721,17 +3721,15 @@ var require_websocket_server = __commonJS({
 });
 
 // packages/event-bridge/src/main.ts
-import fs6 from "node:fs";
-import os2 from "node:os";
-import http2 from "node:http";
-import path6 from "node:path";
+import fs8 from "node:fs";
+import os3 from "node:os";
+import path8 from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 
 // packages/event-bridge/src/server.ts
-import http from "node:http";
-import fs2 from "node:fs";
-import path2 from "node:path";
+import http2 from "node:http";
+import fs3 from "node:fs";
+import path3 from "node:path";
 
 // packages/event-bridge/src/store.ts
 var EventStore = class {
@@ -3837,14 +3835,24 @@ data: ${JSON.stringify(events)}
 }
 
 // packages/adapter-claude-code/src/mask.ts
-var SECRET_ASSIGN = /(?<![A-Za-z0-9_])([A-Za-z0-9_-]*(?:key|token|secret|passw(?:or)?d|pwd|auth(?!or\b)|credential|cookie|session)[A-Za-z0-9_-]*)\s*[=:]\s*("[^"]*"|'[^']*'|\S+)/gi;
-var SECRET_FLAG = /(?<![A-Za-z0-9_])(--?[A-Za-z0-9_-]*(?:key|token|secret|passw(?:or)?d|pwd|auth(?!or\b)|credential)[A-Za-z0-9_-]*)\s+("[^"]*"|'[^']*'|[^\s=:-]\S*)/gi;
+var SECRET_ASSIGN = /(?<![A-Za-z0-9_])([A-Za-z0-9_-]{0,48}?(?:key|token|secret|passw(?:or)?d|pwd|auth(?!or\b)|credential|cookie|session)[A-Za-z0-9_-]{0,48})\s{0,8}[=:]\s{0,8}("[^"]*"|'[^']*'|\S+)/gi;
+var SECRET_FLAG = /(?<![A-Za-z0-9_])(--?[A-Za-z0-9_-]{0,48}?(?:key|token|secret|passw(?:or)?d|pwd|auth(?!or\b)|credential)[A-Za-z0-9_-]{0,48})\s{1,8}("[^"]*"|'[^']*'|[^\s=:-]\S*)/gi;
 var BEARER = /\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
-var LONG_TOKEN = /\b(?=[A-Za-z0-9_+=-]*\d)(?=[A-Za-z0-9_+=-]*[A-Za-z])[A-Za-z0-9_+=-]{32,}\b/g;
+var TOKEN_RUN = /[A-Za-z0-9_+=-]{32,}/g;
+var EDGE = /* @__PURE__ */ new Set(["+", "=", "-"]);
+function maskRun(run) {
+  let i = 0;
+  let j = run.length;
+  while (i < j && EDGE.has(run[i])) i++;
+  while (j > i && EDGE.has(run[j - 1])) j--;
+  const core = run.slice(i, j);
+  if (core.length < 32 || !/\d/.test(core) || !/[A-Za-z]/.test(core)) return run;
+  return run.slice(0, i) + "***" + run.slice(j);
+}
 var KNOWN_PREFIX = /\b(sk-[A-Za-z0-9_-]{6,}|gh[pousr]_[A-Za-z0-9]{10,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{12,})\b/g;
-var URL_CREDS = /(\w+:\/\/)[^\s/:@]+:[^\s/@]+@/g;
+var URL_CREDS = /(?<!\w)(\w{1,64}:\/\/)[^\s/:@]{1,256}:[^\s/@]{1,512}@/g;
 function maskSecrets(s) {
-  return s.replace(BEARER, (_m, k) => `${k} ***`).replace(SECRET_ASSIGN, (_m, k) => `${k}=***`).replace(SECRET_FLAG, (_m, k) => `${k} ***`).replace(URL_CREDS, "$1***@").replace(KNOWN_PREFIX, "***").replace(LONG_TOKEN, "***");
+  return s.replace(BEARER, (_m, k) => `${k} ***`).replace(SECRET_ASSIGN, (_m, k) => `${k}=***`).replace(SECRET_FLAG, (_m, k) => `${k} ***`).replace(URL_CREDS, "$1***@").replace(KNOWN_PREFIX, "***").replace(TOKEN_RUN, maskRun);
 }
 function clip(s, n) {
   const one = s.replace(/\s+/g, " ").trim();
@@ -4110,6 +4118,10 @@ function base(id, layer, kind, p) {
   return { id, layer, kind, path: p, exists: !!st, size: st?.isFile() ? st.size : void 0, mtime: st ? st.mtimeMs : void 0 };
 }
 function readJson(e, limit = MAX_JSON_BYTES) {
+  if (!stat(e.path)?.isFile()) {
+    e.error = "unreadable";
+    return void 0;
+  }
   if ((e.size ?? 0) > limit) {
     e.error = "too-large";
     return void 0;
@@ -4290,6 +4302,59 @@ function scanConfig(opts) {
   return { cwd, userDir, scannedAt: Date.now(), entries };
 }
 
+// packages/event-bridge/src/proof.ts
+import crypto2 from "node:crypto";
+import http from "node:http";
+var NONCE_RE = /^[0-9a-f]{32,64}$/;
+function healthProof(token2, nonce) {
+  return crypto2.createHmac("sha256", token2).update(`office-health:${nonce}`).digest("hex");
+}
+function proofMatches(given, token2, nonce) {
+  const want = healthProof(token2, nonce);
+  return typeof given === "string" && given.length === want.length && crypto2.timingSafeEqual(Buffer.from(given), Buffer.from(want));
+}
+function askOffice(port2, token2, timeoutMs = 800) {
+  return new Promise((resolve) => {
+    const nonce = crypto2.randomBytes(16).toString("hex");
+    const req = http.get({ host: "127.0.0.1", port: port2, path: "/api/health", timeout: timeoutMs, headers: { "x-office-token": token2, "x-office-nonce": nonce } }, (res) => {
+      const c = [];
+      let size = 0;
+      res.on("data", (d) => {
+        size += d.length;
+        if (size > 64 * 1024) req.destroy();
+        else c.push(d);
+      });
+      res.on("error", () => resolve({ ok: false }));
+      res.on("end", () => {
+        try {
+          const j = JSON.parse(Buffer.concat(c).toString());
+          const ok = !!j && typeof j === "object" && j.app === "onecarat-agent-office" && proofMatches(j.proof, token2, nonce);
+          resolve(ok ? { ok, body: j } : { ok: false });
+        } catch {
+          resolve({ ok: false });
+        }
+      });
+    });
+    req.on("error", () => resolve({ ok: false }));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ ok: false });
+    });
+  });
+}
+
+// packages/event-bridge/src/local-dir.ts
+import fs2 from "node:fs";
+import path2 from "node:path";
+function isLocalAbsolute(p, platform = process.platform) {
+  if (typeof p !== "string" || !p || p.includes("\0")) return false;
+  if (platform === "win32") return /^[A-Za-z]:[\\/]/.test(p);
+  return path2.posix.isAbsolute(p);
+}
+function isLocalDir(p) {
+  return isLocalAbsolute(p) && !!fs2.statSync(p, { throwIfNoEntry: false })?.isDirectory();
+}
+
 // packages/event-bridge/src/server.ts
 var MIME = {
   ".html": "text/html; charset=utf-8",
@@ -4305,12 +4370,12 @@ function createBridge(opts) {
   const broadcaster = new Broadcaster(store);
   const reorder = new ReorderBuffer(opts.reorderWindowMs ?? 300, (b) => store.append(b));
   const stats = { received: 0, rejected: 0 };
-  const uiRoot = opts.uiDir ? path2.resolve(opts.uiDir) : void 0;
+  const uiRoot = opts.uiDir ? path3.resolve(opts.uiDir) : void 0;
   const send = (res, code, body, type = "application/json; charset=utf-8", extra = {}) => {
     res.writeHead(code, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
     res.end(body);
   };
-  const server = http.createServer((req, res) => {
+  const server = http2.createServer((req, res) => {
     handle(req, res).catch((e) => {
       stats.rejected++;
       if (!res.headersSent) send(res, e instanceof URIError ? 400 : 500, "{}");
@@ -4352,7 +4417,8 @@ function createBridge(opts) {
     }
     const authed = tokenMatches(req.headers["x-office-token"], opts.token);
     if (url.pathname === "/api/health" && req.method === "GET") {
-      const base2 = { ok: true, app: "onecarat-agent-office", version: opts.version, authed };
+      const nonce = header(req, "x-office-nonce");
+      const base2 = { ok: true, app: "onecarat-agent-office", version: opts.version, authed, ...nonce && NONCE_RE.test(nonce) ? { proof: healthProof(opts.token, nonce) } : {} };
       if (!authed) return send(res, 200, JSON.stringify(base2));
       const terminal2 = opts.terminal?.state ?? { available: false, reason: "disabled", running: false };
       return send(res, 200, JSON.stringify({ ...base2, events: store.size, clients: broadcaster.count, received: stats.received, terminal: terminal2 }));
@@ -4378,7 +4444,7 @@ function createBridge(opts) {
       const asked = url.searchParams.get("cwd");
       let cwd = opts.config.defaultCwd;
       if (asked) {
-        if (!path2.isAbsolute(asked) || asked.includes("\0") || !fs2.statSync(asked, { throwIfNoEntry: false })?.isDirectory()) return send(res, 400, '{"error":"bad cwd"}');
+        if (!isLocalDir(asked)) return send(res, 400, '{"error":"bad cwd"}');
         cwd = asked;
       }
       return send(res, 200, JSON.stringify(scanConfig({ cwd, home: opts.config.home, configDir: opts.config.configDir, managedDir: opts.config.managedDir })));
@@ -4396,11 +4462,11 @@ function createBridge(opts) {
         return send(res, 400, "bad path", "text/plain");
       }
       if (rel.includes("\0")) return send(res, 400, "bad path", "text/plain");
-      const file = path2.resolve(uiRoot, "." + rel);
-      if (!file.startsWith(uiRoot + path2.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
-      fs2.readFile(file, (err, data) => {
+      const file = path3.resolve(uiRoot, "." + rel);
+      if (!file.startsWith(uiRoot + path3.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
+      fs3.readFile(file, (err, data) => {
         if (err) return send(res, 404, "not found", "text/plain");
-        const type = MIME[path2.extname(file).toLowerCase()] ?? "application/octet-stream";
+        const type = MIME[path3.extname(file).toLowerCase()] ?? "application/octet-stream";
         const extra = type.startsWith("text/html") ? { "content-security-policy": CSP } : {};
         if (rel.startsWith("/assets/")) extra["cache-control"] = "public, max-age=31536000, immutable";
         res.writeHead(200, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
@@ -4461,45 +4527,45 @@ function attachTerminal(ws, term) {
   if (back) out({ t: "out", d: back });
   const off = term.subscribe(out);
   ws.on("message", (raw) => {
-    let m;
     try {
-      m = JSON.parse(String(raw));
+      const m = JSON.parse(String(raw));
+      if (!m || typeof m !== "object") return;
+      if (m.t === "in" && typeof m.d === "string") term.write(m.d);
+      else if (m.t === "resize") term.resize(m.cols, m.rows);
+      else if (m.t === "start") {
+        const err = term.start(typeof m.cwd === "string" && m.cwd ? m.cwd : void 0);
+        if (err) out({ t: "state", state: { ...term.state, reason: err } });
+      } else if (m.t === "stop") term.stop();
     } catch {
-      return;
     }
-    if (m.t === "in" && typeof m.d === "string") term.write(m.d);
-    else if (m.t === "resize") term.resize(m.cols, m.rows);
-    else if (m.t === "start") {
-      const err = term.start(typeof m.cwd === "string" && m.cwd ? m.cwd : void 0);
-      if (err) out({ t: "state", state: { ...term.state, reason: err } });
-    } else if (m.t === "stop") term.stop();
   });
+  ws.on("error", () => ws.terminate());
   ws.on("close", off);
 }
 
 // packages/event-bridge/src/runtime-file.ts
-import fs3 from "node:fs";
+import fs4 from "node:fs";
 import os from "node:os";
-import path3 from "node:path";
+import path4 from "node:path";
 function runtimeDir(env = process.env, platform = process.platform) {
   if (env.ONECARAT_OFFICE_RUNTIME_DIR) return env.ONECARAT_OFFICE_RUNTIME_DIR;
   const home = os.homedir();
-  if (platform === "win32") return path3.join(env.LOCALAPPDATA || path3.join(home, "AppData", "Local"), "onecarat-agent-office");
-  if (platform === "darwin") return path3.join(home, "Library", "Application Support", "onecarat-agent-office");
-  return path3.join(env.XDG_STATE_HOME || path3.join(home, ".local", "state"), "onecarat-agent-office");
+  if (platform === "win32") return path4.join(env.LOCALAPPDATA || path4.join(home, "AppData", "Local"), "onecarat-agent-office");
+  if (platform === "darwin") return path4.join(home, "Library", "Application Support", "onecarat-agent-office");
+  return path4.join(env.XDG_STATE_HOME || path4.join(home, ".local", "state"), "onecarat-agent-office");
 }
 function runtimeFilePath(env, platform) {
-  return path3.join(runtimeDir(env, platform), "bridge.json");
+  return path4.join(runtimeDir(env, platform), "bridge.json");
 }
 function writeRuntimeFile(info, file = runtimeFilePath()) {
-  fs3.mkdirSync(path3.dirname(file), { recursive: true, mode: 448 });
+  fs4.mkdirSync(path4.dirname(file), { recursive: true, mode: 448 });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs3.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
-  fs3.renameSync(tmp, file);
+  fs4.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
+  fs4.renameSync(tmp, file);
 }
 function readRuntimeFile(file = runtimeFilePath()) {
   try {
-    const v = JSON.parse(fs3.readFileSync(file, "utf8"));
+    const v = JSON.parse(fs4.readFileSync(file, "utf8"));
     return typeof v.port === "number" && typeof v.token === "string" ? v : void 0;
   } catch {
     return void 0;
@@ -4509,16 +4575,16 @@ function removeRuntimeFile(pid, file = runtimeFilePath()) {
   const cur = readRuntimeFile(file);
   if (cur && cur.pid !== pid) return;
   try {
-    fs3.unlinkSync(file);
+    fs4.unlinkSync(file);
   } catch {
   }
 }
 
 // packages/event-bridge/src/terminal.ts
-import crypto2 from "node:crypto";
-import fs5 from "node:fs";
+import crypto3 from "node:crypto";
+import fs6 from "node:fs";
 import { createRequire } from "node:module";
-import path5 from "node:path";
+import path6 from "node:path";
 
 // packages/event-bridge/src/child-env.ts
 var DROP_EXACT = /* @__PURE__ */ new Set(["CLAUDECODE", "AI_AGENT", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PROJECT_DIR", "CLAUDE_ENV_FILE"]);
@@ -4546,9 +4612,13 @@ function childEnv(env = process.env, extra = {}) {
 }
 
 // packages/event-bridge/src/claude-path.ts
-import fs4 from "node:fs";
-import path4 from "node:path";
+import fs5 from "node:fs";
+import path5 from "node:path";
 var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+function systemRoot(env = process.env) {
+  const v = envGet(env, "SYSTEMROOT") ?? envGet(env, "WINDIR");
+  return v && /^[A-Za-z]:[\\/]/.test(v) && !v.includes('"') ? v : "C:\\Windows";
+}
 function envGet(env, name) {
   const k = Object.keys(env).find((x) => x.toUpperCase() === name);
   return k ? env[k] : void 0;
@@ -4559,12 +4629,12 @@ function resolveClaude(env = process.env, platform = process.platform) {
   const names = win ? (envGet(env, "PATHEXT") ?? DEFAULT_PATHEXT).split(";").filter(Boolean).map((e) => "claude" + e.toLowerCase()) : ["claude"];
   for (const raw of entries) {
     const dir = raw.replace(/^"|"$/g, "");
-    if (!dir || dir === "." || !path4.isAbsolute(dir)) continue;
+    if (!dir || dir === "." || !path5.isAbsolute(dir)) continue;
     for (const name of names) {
-      const f = path4.join(dir, name);
+      const f = path5.join(dir, name);
       try {
-        if (!fs4.statSync(f).isFile()) continue;
-        if (!win) fs4.accessSync(f, fs4.constants.X_OK);
+        if (!fs5.statSync(f).isFile()) continue;
+        if (!win) fs5.accessSync(f, fs5.constants.X_OK);
         if (f.includes('"')) continue;
         return f;
       } catch {
@@ -4576,7 +4646,9 @@ function resolveClaude(env = process.env, platform = process.platform) {
 function claudeCommand(exe, sessionId, env = process.env, platform = process.platform) {
   if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new Error("bad session id");
   if (platform === "win32" && /\.(cmd|bat)$/i.test(exe)) {
-    return { file: envGet(env, "COMSPEC") || "cmd.exe", args: `/d /s /c ""${exe}" --session-id ${sessionId}"` };
+    const comspec = envGet(env, "COMSPEC");
+    const cmd = comspec && /^[A-Za-z]:[\\/]/.test(comspec) ? comspec : path5.win32.join(systemRoot(env), "System32", "cmd.exe");
+    return { file: cmd, args: `/d /s /c ""${exe}" --session-id ${sessionId}"` };
   }
   return { file: exe, args: ["--session-id", sessionId] };
 }
@@ -4587,8 +4659,8 @@ function loadPty(candidates) {
   const plat = `${process.platform}-${process.arch}`;
   const reasons = [];
   for (const dir of candidates) {
-    if (!fs5.existsSync(path5.join(dir, "package.json"))) continue;
-    const hasNative = fs5.existsSync(path5.join(dir, "prebuilds", plat)) || fs5.existsSync(path5.join(dir, "build", "Release"));
+    if (!fs6.existsSync(path6.join(dir, "package.json"))) continue;
+    const hasNative = fs6.existsSync(path6.join(dir, "prebuilds", plat)) || fs6.existsSync(path6.join(dir, "build", "Release"));
     if (!hasNative) {
       reasons.push(`no node-pty binary for ${plat}`);
       continue;
@@ -4650,13 +4722,14 @@ var Terminal = class {
     if (!this.opts.load.ok) return this.opts.load.reason;
     if (!this.command) return this.st.reason ?? "claude was not found on PATH";
     if (this.proc) return "already running";
+    if (cwd !== void 0 && !isLocalAbsolute(cwd)) return "not a local folder";
     const dir = cwd ?? this.st.cwd;
     try {
-      if (!fs5.statSync(dir).isDirectory()) return "not a folder";
+      if (!fs6.statSync(dir).isDirectory()) return "not a folder";
     } catch {
       return "folder not found";
     }
-    const sessionId = crypto2.randomUUID();
+    const sessionId = crypto3.randomUUID();
     const { file, args: args2 } = this.command(sessionId);
     this.clearScrollback();
     let proc;
@@ -4742,8 +4815,62 @@ function whenTerminalEnds(term, delayMs, onEnd) {
   };
 }
 
+// packages/event-bridge/src/open-browser.ts
+import crypto4 from "node:crypto";
+import fs7 from "node:fs";
+import os2 from "node:os";
+import path7 from "node:path";
+import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
+var HANDOFF_PREFIX = "onecarat-agent-office-open-";
+var HANDOFF_LIFETIME_MS = 2e4;
+function browserCommand(target, platform = process.platform, env = process.env) {
+  if (platform === "win32") return { file: path7.win32.join(systemRoot(env), "System32", "rundll32.exe"), args: ["url.dll,FileProtocolHandler", target] };
+  if (platform === "darwin") return { file: "/usr/bin/open", args: [target] };
+  return { file: "xdg-open", args: [target] };
+}
+function handoffHtml(url) {
+  const js = JSON.stringify(url).replace(/</g, "\\u003c");
+  return `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Onecarat Agent Office</title><script>location.replace(${js})</script>
+`;
+}
+function handoffDir(platform = process.platform, env = process.env) {
+  return platform === "darwin" ? runtimeDir(env, platform) : os2.homedir();
+}
+function writeHandoff(url, dir, startCleaner = true) {
+  fs7.mkdirSync(dir, { recursive: true, mode: 448 });
+  for (const n of fs7.readdirSync(dir)) {
+    if (!n.startsWith(HANDOFF_PREFIX) || !n.endsWith(".html")) continue;
+    try {
+      const f = path7.join(dir, n);
+      if (Date.now() - fs7.statSync(f).mtimeMs > HANDOFF_LIFETIME_MS) fs7.unlinkSync(f);
+    } catch {
+    }
+  }
+  const file = path7.join(dir, `${HANDOFF_PREFIX}${crypto4.randomBytes(8).toString("hex")}.html`);
+  fs7.writeFileSync(file, handoffHtml(url), { mode: 384, flag: "wx" });
+  if (startCleaner) {
+    const cleaner = `setTimeout(()=>{try{require('node:fs').unlinkSync(process.argv[1])}catch{}},${HANDOFF_LIFETIME_MS})`;
+    spawn(process.execPath, ["-e", cleaner, file], { detached: true, stdio: "ignore" }).unref();
+  }
+  return file;
+}
+function openWithKey(url, platform = process.platform, env = process.env) {
+  try {
+    const target = platform === "win32" ? url : pathToFileURL(writeHandoff(url, handoffDir(platform, env))).href;
+    const { file, args: args2 } = browserCommand(target, platform, env);
+    const child = spawn(file, args2, { detached: true, stdio: "ignore" });
+    child.on("error", () => {
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // packages/event-bridge/src/main.ts
-var VERSION = "0.2.5";
+var VERSION = "0.2.6";
 var DEFAULT_PORT = 47821;
 var args = process.argv.slice(2);
 var flag = (name) => args.includes(`--${name}`);
@@ -4751,8 +4878,8 @@ var opt = (name) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : void 0;
 };
-var here = path6.dirname(fileURLToPath(import.meta.url));
-var bundled = fs6.existsSync(path6.join(here, "ui", "index.html"));
+var here = path8.dirname(fileURLToPath(import.meta.url));
+var bundled = fs8.existsSync(path8.join(here, "ui", "index.html"));
 var LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}\/?$/;
 var devOpt = (name) => bundled ? void 0 : opt(name);
 var devOrigin = devOpt("dev-origin");
@@ -4761,12 +4888,12 @@ if (devOrigin && !LOOPBACK.test(devOrigin)) fail(`--dev-origin must be a loopbac
 if (openBase && !LOOPBACK.test(openBase)) fail(`--open-base must be a loopback URL, got ${openBase}`);
 var port = Number(opt("port") ?? process.env.ONECARAT_OFFICE_PORT ?? DEFAULT_PORT);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) fail(`--port must be between 1024 and 65535, got ${opt("port")}`);
-var uiDir = devOpt("ui-dir") ?? (bundled ? path6.join(here, "ui") : path6.resolve(here, "../../office-ui/dist"));
-var ptyCandidates = [path6.join(here, "vendor", "node-pty"), path6.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")];
-var termCwd = path6.resolve(opt("cwd") ?? process.cwd());
+var uiDir = devOpt("ui-dir") ?? (bundled ? path8.join(here, "ui") : path8.resolve(here, "../../office-ui/dist"));
+var ptyCandidates = [path8.join(here, "vendor", "node-pty"), path8.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")];
+var termCwd = path8.resolve(opt("cwd") ?? process.cwd());
 var devOrigins = devOrigin ? [devOrigin.replace(/\/$/, "")] : [];
 var existing = readRuntimeFile();
-if (existing && existing.pid !== process.pid && isAlive(existing.pid) && await isOffice(existing.port, existing.token)) {
+if (existing && existing.pid !== process.pid && isAlive(existing.pid) && (await askOffice(existing.port, existing.token)).ok) {
   console.error(`Onecarat Agent Office is already running (pid ${existing.pid}) at http://127.0.0.1:${existing.port}/`);
   process.exit(3);
 }
@@ -4781,7 +4908,7 @@ var bridge = createBridge({
   terminal,
   devOrigins,
   // Read-only view of Claude Code's own configuration files (secret values hidden, nothing kept).
-  config: { home: os2.homedir(), defaultCwd: termCwd, configDir: process.env.CLAUDE_CONFIG_DIR || void 0 },
+  config: { home: os3.homedir(), defaultCwd: termCwd, configDir: process.env.CLAUDE_CONFIG_DIR || void 0 },
   onShutdownRequest: () => void shutdown("stop requested")
 });
 whenTerminalEnds(terminal, 3e3, () => void shutdown("Claude Code in the built-in terminal ended", "claude-ended"));
@@ -4799,7 +4926,7 @@ bridge.server.listen(port, "127.0.0.1", () => {
   console.log(`  terminal: ${t.available ? `available (${t.claudePath} starts in ${termCwd})` : `unavailable \u2014 ${t.reason}; Office runs read-only`}`);
   console.log(`  runtime:  ${runtimeFilePath()}`);
   console.log("  Events and terminal output are kept in memory only. Press Ctrl+C to stop.");
-  if (!bundled && flag("open")) openBrowser(`${openBase ?? url}#t=${token}`);
+  if (!bundled && flag("open")) openWithKey(`${openBase ?? url}#t=${token}`);
 });
 var stopping = false;
 async function shutdown(reason, uiReason = "stopped") {
@@ -4827,28 +4954,4 @@ function isAlive(pid) {
   } catch {
     return false;
   }
-}
-function isOffice(p, t) {
-  return new Promise((resolve) => {
-    const req = http2.get({ host: "127.0.0.1", port: p, path: "/api/health", timeout: 800, headers: { "x-office-token": t } }, (res) => {
-      let s = "";
-      res.on("data", (d) => s += d);
-      res.on("end", () => {
-        try {
-          resolve(JSON.parse(s).app === "onecarat-agent-office");
-        } catch {
-          resolve(false);
-        }
-      });
-    });
-    req.on("error", () => resolve(false));
-    req.on("timeout", () => {
-      req.destroy();
-      resolve(false);
-    });
-  });
-}
-function openBrowser(url) {
-  const [cmd, ...a] = process.platform === "win32" ? ["rundll32.exe", "url.dll,FileProtocolHandler", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
-  spawn(cmd, a, { detached: true, stdio: "ignore" }).unref();
 }

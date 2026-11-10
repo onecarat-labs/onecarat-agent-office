@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { childEnv } from './child-env.ts';
 import { claudeCommand, resolveClaude, type SpawnSpec } from './claude-path.ts';
+import { isLocalAbsolute } from './local-dir.ts';
 
 export interface PtyProcess {
   pid: number;
@@ -126,6 +127,8 @@ export class Terminal {
     if (!this.opts.load.ok) return this.opts.load.reason;
     if (!this.command) return this.st.reason ?? 'claude was not found on PATH';
     if (this.proc) return 'already running';
+    // A folder named by the page must be absolute and local (no relative paths, no \\host\share).
+    if (cwd !== undefined && !isLocalAbsolute(cwd)) return 'not a local folder';
     const dir = cwd ?? this.st.cwd;
     try {
       if (!fs.statSync(dir).isDirectory()) return 'not a folder';

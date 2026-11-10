@@ -112,10 +112,10 @@ test('forwarder end-to-end: delivers when bridge runs, silent exit 0 when not', 
   // 1) no runtime file -> exit 0, no output
   assert.deepEqual(await run(), { code: 0, out: '' });
   // 2) runtime file pointing at a dead port -> still exit 0, no output
-  writeRuntimeFile({ port: 47912, token: TOKEN, pid: 1, startedAt: 0, version: 't' }, path.join(dir, 'bridge.json'));
+  writeRuntimeFile({ port: 47912, token: TOKEN, pid: process.pid, startedAt: Date.now(), version: 't' }, path.join(dir, 'bridge.json'));
   assert.deepEqual(await run(), { code: 0, out: '' });
   // 3) live bridge -> delivered
-  writeRuntimeFile({ port: PORT, token: TOKEN, pid: 1, startedAt: 0, version: 't' }, path.join(dir, 'bridge.json'));
+  writeRuntimeFile({ port: PORT, token: TOKEN, pid: process.pid, startedAt: Date.now(), version: 't' }, path.join(dir, 'bridge.json'));
   bridge.store.clear();
   assert.deepEqual(await run(), { code: 0, out: '' });
   await sleep(150);
