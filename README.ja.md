@@ -67,7 +67,7 @@ forward.mjs ── 必要な項目だけを抜き出して POST（Office 停止�
 
 - **Office はモデルを呼びません。** Anthropic API、Agent SDK、`claude -p` は使わないので、**追加の利用料はかかりません**。ただし、ほかのプラグインの Skill と同じく、Skill の短い説明文（数十トークン程度）は毎セッションのコンテキストに含まれます。
 - 認証情報（`~/.claude/.credentials.json` など）は**読みません**。
-- **Claude Code の設定**ビュー（左のファイルのアイコン）では、Claude Code が設定を読む場所をすべて、役割の説明つきで一覧にし、開いたときに現在の内容を**読み取り専用**で表示します。秘密に見える値と `env`/`headers` の中身は伏せます。`~/.claude.json` からは MCP サーバーと、このプロジェクトの許可だけを読みます。Office はこれらのファイルを編集しません。変更は Claude Code に頼んでください。
+- **設定**（左の歯車のアイコン）は、メニュー・一覧・詳細の 3 ペインです。「Office」には Office 自身の表示設定（テーマ、アニメーション、言語）があります。「Claude Code」では、Claude Code が設定を読む場所をすべて、種類ごとに役割の説明つきで一覧にし、開いたときに現在の内容を**読み取り専用**で表示します。秘密に見える値と `env`/`headers` の中身は伏せます。`~/.claude.json` からは MCP サーバーと、このプロジェクトの許可だけを読みます。Office はこれらのファイルを編集しません。変更は Claude Code に頼んでください。
 
 詳しくは [docs/architecture.md](docs/architecture.md) と [docs/security.md](docs/security.md)（いずれも英語）を見てください。
 

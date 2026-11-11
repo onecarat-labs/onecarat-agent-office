@@ -276,3 +276,58 @@ export const KEY_TEXT: Record<Lang, Record<string, string>> = {
     $schema: 'schema for editor completion',
   },
 };
+
+/** Menu of the settings view: Claude Code's locations grouped by what they are about. A location may appear in
+ * more than one topic (.claude.json holds both MCP servers and per-project records). */
+export interface Topic { id: string; ids: string[]; text: Record<Lang, { title: string; note: string }> }
+
+export const TOPICS: Topic[] = [
+  {
+    id: 'settings',
+    ids: ['managed-settings', 'user-settings', 'user-claude-json', 'user-keybindings', 'project-settings', 'project-settings-local'],
+    text: {
+      ja: { title: '設定ファイル', note: '許可、フック、環境変数、モデル、プラグイン、キー割り当て。' },
+      en: { title: 'Settings files', note: 'Permissions, hooks, environment, model, plugins, key bindings.' },
+    },
+  },
+  {
+    id: 'instructions',
+    ids: ['managed-claude-md', 'user-claude-md', 'user-rules', 'user-memory', 'project-claude-md', 'project-claude-local-md', 'project-ancestors', 'project-rules'],
+    text: {
+      ja: { title: '指示とメモリ', note: 'CLAUDE.md、ルール、自動メモリ。Claude に守ってほしいこと。' },
+      en: { title: 'Instructions & memory', note: 'CLAUDE.md, rules and auto memory: what Claude should keep to.' },
+    },
+  },
+  {
+    id: 'mcp',
+    ids: ['managed-mcp', 'user-claude-json', 'project-mcp'],
+    text: {
+      ja: { title: 'MCP', note: '外部ツールにつなぐ MCP サーバー。' },
+      en: { title: 'MCP', note: 'MCP servers that connect external tools.' },
+    },
+  },
+  {
+    id: 'skills',
+    ids: ['user-skills', 'user-commands', 'project-skills', 'project-commands'],
+    text: {
+      ja: { title: 'スキルとコマンド', note: '自作のスキルとスラッシュコマンド。' },
+      en: { title: 'Skills & commands', note: 'Your own skills and slash commands.' },
+    },
+  },
+  {
+    id: 'agents',
+    ids: ['user-agents', 'project-agents'],
+    text: {
+      ja: { title: 'エージェント', note: '自分で定義したサブエージェント。' },
+      en: { title: 'Agents', note: 'Subagents you define.' },
+    },
+  },
+  {
+    id: 'output-styles',
+    ids: ['user-output-styles', 'project-output-styles'],
+    text: {
+      ja: { title: '出力スタイル', note: 'Claude の応答の仕方を切り替えるスタイル。' },
+      en: { title: 'Output styles', note: 'Styles that change how Claude answers.' },
+    },
+  },
+];

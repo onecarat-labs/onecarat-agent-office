@@ -37,6 +37,7 @@
 8. Stop Office → keep using Claude Code → no hook errors; no runtime file left; no embedded `claude` process left.
 9. Disable / uninstall the plugin → hooks gone; `~/.claude/settings.json` has no leftover Office hooks.
 10. Light/dark, 390 px width, keyboard (Tab / ←→ / Enter), reduced motion.
+11. Settings (gear): menu / list / detail. Office → Display changes theme, motion and language at once and keeps them after a reload. Each Claude Code topic lists its locations with the in-use count; the folder selector and Reload re-read; nothing is editable.
 
 ## Not yet verified
 - macOS (the prebuild is shipped but untested) and Linux (read-only by design today).
