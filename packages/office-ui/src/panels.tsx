@@ -20,9 +20,75 @@ export function MaxToggle({ on, onToggle, lang, className = '' }: { on: boolean;
   );
 }
 
+/** Smallest / largest share of the container the first pane of a splitter may take. */
+export const SPLIT_MIN = 0.15;
+export const SPLIT_MAX = 0.85;
+const clampSplit = (v: number) => Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, v));
+
+/**
+ * Draggable border between two panes of a grid container. It is its own grid track; `value` is the share of the
+ * remaining space the pane before it takes. horizontal = a horizontal bar (changes heights), vertical = widths.
+ * Mouse / touch drag, arrow keys, Home / End; double-click or Enter resets.
+ */
+export function Splitter({ orientation, value, onChange, onReset, label }: { orientation: 'horizontal' | 'vertical'; value: number; onChange: (v: number) => void; onReset: () => void; label: string }) {
+  const [dragging, setDragging] = useState(false);
+  const horizontal = orientation === 'horizontal';
+  const fromPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const box = el.parentElement;
+    if (!box) return;
+    const r = box.getBoundingClientRect();
+    const cs = getComputedStyle(box);
+    const own = el.getBoundingClientRect();
+    const start = horizontal ? r.top + parseFloat(cs.paddingTop) : r.left + parseFloat(cs.paddingLeft);
+    const end = horizontal ? r.bottom - parseFloat(cs.paddingBottom) : r.right - parseFloat(cs.paddingRight);
+    const thick = horizontal ? own.height : own.width;
+    const room = end - start - thick;
+    if (room <= 0) return;
+    onChange(clampSplit(((horizontal ? e.clientY : e.clientX) - start - thick / 2) / room));
+  };
+  const onKey = (e: React.KeyboardEvent) => {
+    const back = horizontal ? 'ArrowUp' : 'ArrowLeft';
+    const fwd = horizontal ? 'ArrowDown' : 'ArrowRight';
+    if (e.key === back) onChange(clampSplit(value - 0.02));
+    else if (e.key === fwd) onChange(clampSplit(value + 0.02));
+    else if (e.key === 'Home') onChange(SPLIT_MIN);
+    else if (e.key === 'End') onChange(SPLIT_MAX);
+    else if (e.key === 'Enter') onReset();
+    else return;
+    e.preventDefault();
+  };
+  return (
+    <div
+      className={`splitter ${horizontal ? 'h' : 'v'}${dragging ? ' dragging' : ''}`}
+      role="separator"
+      tabIndex={0}
+      aria-orientation={orientation}
+      aria-label={label}
+      title={label}
+      aria-valuemin={Math.round(SPLIT_MIN * 100)}
+      aria-valuemax={Math.round(SPLIT_MAX * 100)}
+      aria-valuenow={Math.round(value * 100)}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault(); // no text selection while dragging
+        e.currentTarget.setPointerCapture(e.pointerId);
+        e.currentTarget.focus();
+        setDragging(true);
+      }}
+      onPointerMove={(e) => { if (dragging) fromPointer(e); }}
+      onPointerUp={() => setDragging(false)}
+      onPointerCancel={() => setDragging(false)}
+      onLostPointerCapture={() => setDragging(false)}
+      onDoubleClick={onReset}
+      onKeyDown={onKey}
+    />
+  );
+}
+
 type MaxProps = { max: boolean; onMax: () => void };
 
-export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax, onStop, officeStopped }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string; onStop?: () => void; officeStopped?: boolean } & MaxProps) {
+export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax, onStop, officeStopped, fontScale }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string; onStop?: () => void; officeStopped?: boolean; fontScale?: number } & MaxProps) {
   const t = dict[lang];
   const termOk = !!term && term.state?.available !== false;
   const [tab, setTab] = useState<'terminal' | 'history'>('terminal');
@@ -42,12 +108,12 @@ export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax,
         ) : null}
         <MaxToggle on={max} onToggle={onMax} lang={lang} />
       </div>
-      {showTerm ? <TerminalPane term={term!} lang={lang} cwds={cwds} mode={termMode} onStop={onStop} officeStopped={officeStopped} /> : <HistoryPane session={session} lang={lang} term={term} />}
+      {showTerm ? <TerminalPane term={term!} lang={lang} cwds={cwds} mode={termMode} onStop={onStop} officeStopped={officeStopped} fontScale={fontScale} /> : <HistoryPane session={session} lang={lang} term={term} />}
     </section>
   );
 }
 
-function TerminalPane({ term, lang, cwds, mode, onStop, officeStopped }: { term: TerminalLink; lang: Lang; cwds: string[]; mode?: string; onStop?: () => void; officeStopped?: boolean }) {
+function TerminalPane({ term, lang, cwds, mode, onStop, officeStopped, fontScale }: { term: TerminalLink; lang: Lang; cwds: string[]; mode?: string; onStop?: () => void; officeStopped?: boolean; fontScale?: number }) {
   const t = dict[lang];
   const st = term.state;
   const [folder, setFolder] = useState('');
@@ -102,7 +168,7 @@ function TerminalPane({ term, lang, cwds, mode, onStop, officeStopped }: { term:
       {st?.reason && !st.running ? <div className="term-note warn">{st.reason}</div> : null}
       {st && !st.running && st.exitCode !== undefined ? <div className="term-note">{t.termExited.replace('{code}', String(st.exitCode))}</div> : null}
       {officeStopped ? <div className="term-note">{t.termOfficeStopped}</div> : term.link !== 'open' ? <div className="term-note">{t.termConnecting}</div> : null}
-      <TerminalView term={term} label={t.terminal} />
+      <TerminalView term={term} label={t.terminal} fontScale={fontScale} />
       <div className="chat-note">{t.termIntro}</div>
     </>
   );

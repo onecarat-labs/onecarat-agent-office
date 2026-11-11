@@ -9,6 +9,12 @@ import { CATALOG, KEY_TEXT, LAYER_TEXT, OWNER_TEXT, TOPICS, type CatalogEntry, t
 
 export type Theme = 'system' | 'light' | 'dark';
 export type Motion = 'system' | 'reduce' | 'full';
+/** Text size as a factor of the designed size. */
+export const FONT_SCALE_DEFAULT = 1;
+export const FONT_SCALE_MIN = 0.8;
+export const FONT_SCALE_MAX = 1.6;
+const FONT_SCALE_STEP = 0.1;
+const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 /** Mirrors packages/event-bridge/src/config-scan.ts (the UI does not import Node code). */
 interface ConfigItem { name: string; file: string; description?: string }
@@ -40,13 +46,17 @@ function statusOf(e: ConfigEntry | undefined): Status {
 
 const LAYERS: Layer[] = ['managed', 'user', 'project'];
 const DISPLAY = 'display';
-type DisplayId = 'theme' | 'motion' | 'language';
-const DISPLAY_IDS: DisplayId[] = ['theme', 'motion', 'language'];
+type DisplayId = 'theme' | 'motion' | 'language' | 'textSize' | 'layout';
+const DISPLAY_IDS: DisplayId[] = ['theme', 'motion', 'language', 'textSize', 'layout'];
 
 export interface SettingsProps {
   lang: Lang; setLang: (v: Lang) => void;
   theme: Theme; setTheme: (v: Theme) => void;
   motion: Motion; setMotion: (v: Motion) => void;
+  fontScale: number; setFontScale: (v: number) => void;
+  /** Shares set by dragging the borders on the office screen (stage: of the height, terminal: of the width). */
+  layout: { stage: number; terminal: number; custom: boolean };
+  resetLayout: () => void;
   cwds: string[];
   live: boolean;
 }
@@ -86,9 +96,11 @@ export function SettingsView(p: SettingsProps) {
   const summary = (ids: string[]) => t.cfgSummary.replace('{n}', String(inUse(ids))).replace('{total}', String(ids.length));
   const pick = (id: string) => setPicked((cur) => ({ ...cur, [topicId]: id }));
 
-  const displayLabel: Record<DisplayId, string> = { theme: t.theme, motion: t.motion, language: t.language };
+  const displayLabel: Record<DisplayId, string> = { theme: t.theme, motion: t.motion, language: t.language, textSize: t.textSize, layout: t.layout };
   const modeLabel = { system: t.system, light: t.light, dark: t.dark, reduce: t.reduce, full: t.full };
-  const displayValue: Record<DisplayId, string> = { theme: modeLabel[p.theme], motion: modeLabel[p.motion], language: lang === 'ja' ? '日本語' : 'English' };
+  const displayValue: Record<DisplayId, string> = { theme: modeLabel[p.theme], motion: modeLabel[p.motion], language: lang === 'ja' ? '日本語' : 'English', textSize: pct(p.fontScale), layout: p.layout.custom ? t.layoutCustom : t.layoutDefault };
+  // Steps of 10%, kept on round values (0.1 steps drift in floating point).
+  const setScale = (v: number) => p.setFontScale(Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Math.round(v * 10) / 10)));
 
   let list: React.ReactNode;
   let detail: React.ReactNode;
@@ -148,6 +160,25 @@ export function SettingsView(p: SettingsProps) {
             <Choice name="theme" label={t.theme} about={t.setThemeAbout} value={p.theme} onChange={p.setTheme} options={[['system', t.system], ['light', t.light], ['dark', t.dark]]} />
           ) : selected === 'motion' ? (
             <Choice name="motion" label={t.motion} about={t.setMotionAbout} value={p.motion} onChange={p.setMotion} options={[['system', t.system], ['reduce', t.reduce], ['full', t.full]]} note={t.highFiveNote} />
+          ) : selected === 'textSize' ? (
+            <>
+              <p className="set-about">{t.setTextSizeAbout}</p>
+              <div className="set-size">
+                <button className="btn" aria-label={t.smaller} title={t.smaller} disabled={p.fontScale <= FONT_SCALE_MIN} onClick={() => setScale(p.fontScale - FONT_SCALE_STEP)}>A−</button>
+                <input type="range" aria-label={t.textSize} min={FONT_SCALE_MIN * 100} max={FONT_SCALE_MAX * 100} step={FONT_SCALE_STEP * 100} value={Math.round(p.fontScale * 100)} onChange={(e) => setScale(Number(e.target.value) / 100)} />
+                <button className="btn" aria-label={t.larger} title={t.larger} disabled={p.fontScale >= FONT_SCALE_MAX} onClick={() => setScale(p.fontScale + FONT_SCALE_STEP)}>A+</button>
+                <output aria-live="polite">{pct(p.fontScale)}</output>
+              </div>
+              <button className="btn" disabled={p.fontScale === FONT_SCALE_DEFAULT} onClick={() => p.setFontScale(FONT_SCALE_DEFAULT)}>{t.resetDefault}</button>
+              <p className="cfg-small set-remembered">{t.setRemembered}</p>
+            </>
+          ) : selected === 'layout' ? (
+            <>
+              <p className="set-about">{t.setLayoutAbout}</p>
+              <p className="set-now">{t.layoutNow.replace('{a}', String(Math.round(p.layout.stage * 100))).replace('{b}', String(Math.round(p.layout.terminal * 100)))}</p>
+              <button className="btn" disabled={!p.layout.custom} onClick={p.resetLayout}>{t.resetDefault}</button>
+              <p className="cfg-small set-remembered">{t.setRemembered}</p>
+            </>
           ) : (
             <Choice name="language" label={t.language} about={t.setLanguageAbout} value={lang} onChange={p.setLang} options={[['ja', '日本語'], ['en', 'English']]} />
           )}
