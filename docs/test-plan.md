@@ -29,7 +29,7 @@
 ## Manual (real Claude Code; Demo mode does not count)
 1. Install from the marketplace with the two README commands → "Start Onecarat Agent Office" → the page opens with its key. Opening the URL by hand shows "no access key".
 2. Built-in terminal: start Claude Code, ask for something that uses two subagents → two figures, both report, the manager receives them, high-five, all on one screen.
-3. Built-in terminal in a manual permission mode: an edit request waits for permission; answer with arrows / Enter / Esc in the terminal. Japanese input is not garbled or doubled.
+3. Built-in terminal in a manual permission mode: an edit request waits for permission; answer with arrows / Enter / Esc in the terminal. Japanese input is not garbled or doubled. While Claude Code has mouse reporting on, a right click opens no browser menu; Shift+right click does; with mouse reporting off the browser menu opens as before.
 4. The permission-mode label matches the terminal footer after the next request.
 5. A request that uses no subagent shows no extra figures.
 6. Desktop app session (Manual mode) with a Write → amber waiting state while the prompt is open in Desktop; approve there.
