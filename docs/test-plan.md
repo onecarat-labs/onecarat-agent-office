@@ -17,6 +17,7 @@
 - **Terminal**
   - `/pty` refuses a wrong Origin, a missing token and a wrong token, and never echoes the token
   - only the bridge-defined command runs (`claude --session-id <uuid>`, no other flags); session markers are removed from its environment, user configuration is kept
+  - "continue" and "pick a past session" run `claude --continue` / `claude --resume` and nothing else; an unknown start mode starts nothing; the session is taken from a `SessionStart` hook carrying the current run marker only (no marker, an old run, other events and late hooks are ignored); ending before a conversation opened does not stop Office
   - scrollback is replayed to a new tab and cleared by "clear history"
   - a missing folder is refused
   - without node-pty, Office stays read-only and the rest keeps working

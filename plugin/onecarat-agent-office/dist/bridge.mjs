@@ -3728,8 +3728,8 @@ import { fileURLToPath } from "node:url";
 
 // packages/event-bridge/src/server.ts
 import http2 from "node:http";
-import fs3 from "node:fs";
-import path3 from "node:path";
+import fs4 from "node:fs";
+import path4 from "node:path";
 
 // packages/event-bridge/src/store.ts
 var EventStore = class {
@@ -4355,6 +4355,54 @@ function isLocalDir(p) {
   return isLocalAbsolute(p) && !!fs2.statSync(p, { throwIfNoEntry: false })?.isDirectory();
 }
 
+// packages/event-bridge/src/claude-path.ts
+import fs3 from "node:fs";
+import path3 from "node:path";
+var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+function systemRoot(env = process.env) {
+  const v = envGet(env, "SYSTEMROOT") ?? envGet(env, "WINDIR");
+  return v && /^[A-Za-z]:[\\/]/.test(v) && !v.includes('"') ? v : "C:\\Windows";
+}
+function envGet(env, name) {
+  const k = Object.keys(env).find((x) => x.toUpperCase() === name);
+  return k ? env[k] : void 0;
+}
+function resolveClaude(env = process.env, platform = process.platform) {
+  const win = platform === "win32";
+  const entries = (envGet(env, "PATH") ?? "").split(win ? ";" : ":");
+  const names = win ? (envGet(env, "PATHEXT") ?? DEFAULT_PATHEXT).split(";").filter(Boolean).map((e) => "claude" + e.toLowerCase()) : ["claude"];
+  for (const raw of entries) {
+    const dir = raw.replace(/^"|"$/g, "");
+    if (!dir || dir === "." || !path3.isAbsolute(dir)) continue;
+    for (const name of names) {
+      const f = path3.join(dir, name);
+      try {
+        if (!fs3.statSync(f).isFile()) continue;
+        if (!win) fs3.accessSync(f, fs3.constants.X_OK);
+        if (f.includes('"')) continue;
+        return f;
+      } catch {
+      }
+    }
+  }
+  return void 0;
+}
+var START_MODES = ["new", "continue", "resume"];
+function isStartMode(v) {
+  return typeof v === "string" && START_MODES.includes(v);
+}
+function claudeCommand(exe, sessionId, env = process.env, platform = process.platform, mode = "new") {
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new Error("bad session id");
+  if (!isStartMode(mode)) throw new Error("bad start mode");
+  const argv = mode === "continue" ? ["--continue"] : mode === "resume" ? ["--resume"] : ["--session-id", sessionId];
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(exe)) {
+    const comspec = envGet(env, "COMSPEC");
+    const cmd = comspec && /^[A-Za-z]:[\\/]/.test(comspec) ? comspec : path3.win32.join(systemRoot(env), "System32", "cmd.exe");
+    return { file: cmd, args: `/d /s /c ""${exe}" ${argv.join(" ")}"` };
+  }
+  return { file: exe, args: argv };
+}
+
 // packages/event-bridge/src/server.ts
 var MIME = {
   ".html": "text/html; charset=utf-8",
@@ -4370,7 +4418,7 @@ function createBridge(opts) {
   const broadcaster = new Broadcaster(store);
   const reorder = new ReorderBuffer(opts.reorderWindowMs ?? 300, (b) => store.append(b));
   const stats = { received: 0, rejected: 0 };
-  const uiRoot = opts.uiDir ? path3.resolve(opts.uiDir) : void 0;
+  const uiRoot = opts.uiDir ? path4.resolve(opts.uiDir) : void 0;
   const send = (res, code, body, type = "application/json; charset=utf-8", extra = {}) => {
     res.writeHead(code, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
     res.end(body);
@@ -4404,7 +4452,12 @@ function createBridge(opts) {
         const body = await readBody(req);
         send(res, 200, "{}");
         stats.received++;
-        reorder.push(eventsFromHookBody(body, header(req, "x-office-hook-time")));
+        const events = eventsFromHookBody(body, header(req, "x-office-hook-time"));
+        const run = header(req, "x-office-terminal");
+        if (run && opts.terminal) {
+          for (const e of events) if (e.type === "session.started") opts.terminal.adoptSession(run, e.sessionId);
+        }
+        reorder.push(events);
       } catch (e) {
         stats.rejected++;
         if (!res.headersSent) send(res, e instanceof BodyTooLarge ? 413 : 400, "{}");
@@ -4462,11 +4515,11 @@ function createBridge(opts) {
         return send(res, 400, "bad path", "text/plain");
       }
       if (rel.includes("\0")) return send(res, 400, "bad path", "text/plain");
-      const file = path3.resolve(uiRoot, "." + rel);
-      if (!file.startsWith(uiRoot + path3.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
-      fs3.readFile(file, (err, data) => {
+      const file = path4.resolve(uiRoot, "." + rel);
+      if (!file.startsWith(uiRoot + path4.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
+      fs4.readFile(file, (err, data) => {
         if (err) return send(res, 404, "not found", "text/plain");
-        const type = MIME[path3.extname(file).toLowerCase()] ?? "application/octet-stream";
+        const type = MIME[path4.extname(file).toLowerCase()] ?? "application/octet-stream";
         const extra = type.startsWith("text/html") ? { "content-security-policy": CSP } : {};
         if (rel.startsWith("/assets/")) extra["cache-control"] = "public, max-age=31536000, immutable";
         res.writeHead(200, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
@@ -4533,7 +4586,7 @@ function attachTerminal(ws, term) {
       if (m.t === "in" && typeof m.d === "string") term.write(m.d);
       else if (m.t === "resize") term.resize(m.cols, m.rows);
       else if (m.t === "start") {
-        const err = term.start(typeof m.cwd === "string" && m.cwd ? m.cwd : void 0);
+        const err = m.mode === void 0 || isStartMode(m.mode) ? term.start(typeof m.cwd === "string" && m.cwd ? m.cwd : void 0, m.mode) : "unknown start mode";
         if (err) out({ t: "state", state: { ...term.state, reason: err } });
       } else if (m.t === "stop") term.stop();
     } catch {
@@ -4544,28 +4597,28 @@ function attachTerminal(ws, term) {
 }
 
 // packages/event-bridge/src/runtime-file.ts
-import fs4 from "node:fs";
+import fs5 from "node:fs";
 import os from "node:os";
-import path4 from "node:path";
+import path5 from "node:path";
 function runtimeDir(env = process.env, platform = process.platform) {
   if (env.ONECARAT_OFFICE_RUNTIME_DIR) return env.ONECARAT_OFFICE_RUNTIME_DIR;
   const home = os.homedir();
-  if (platform === "win32") return path4.join(env.LOCALAPPDATA || path4.join(home, "AppData", "Local"), "onecarat-agent-office");
-  if (platform === "darwin") return path4.join(home, "Library", "Application Support", "onecarat-agent-office");
-  return path4.join(env.XDG_STATE_HOME || path4.join(home, ".local", "state"), "onecarat-agent-office");
+  if (platform === "win32") return path5.join(env.LOCALAPPDATA || path5.join(home, "AppData", "Local"), "onecarat-agent-office");
+  if (platform === "darwin") return path5.join(home, "Library", "Application Support", "onecarat-agent-office");
+  return path5.join(env.XDG_STATE_HOME || path5.join(home, ".local", "state"), "onecarat-agent-office");
 }
 function runtimeFilePath(env, platform) {
-  return path4.join(runtimeDir(env, platform), "bridge.json");
+  return path5.join(runtimeDir(env, platform), "bridge.json");
 }
 function writeRuntimeFile(info, file = runtimeFilePath()) {
-  fs4.mkdirSync(path4.dirname(file), { recursive: true, mode: 448 });
+  fs5.mkdirSync(path5.dirname(file), { recursive: true, mode: 448 });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs4.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
-  fs4.renameSync(tmp, file);
+  fs5.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
+  fs5.renameSync(tmp, file);
 }
 function readRuntimeFile(file = runtimeFilePath()) {
   try {
-    const v = JSON.parse(fs4.readFileSync(file, "utf8"));
+    const v = JSON.parse(fs5.readFileSync(file, "utf8"));
     return typeof v.port === "number" && typeof v.token === "string" ? v : void 0;
   } catch {
     return void 0;
@@ -4575,7 +4628,7 @@ function removeRuntimeFile(pid, file = runtimeFilePath()) {
   const cur = readRuntimeFile(file);
   if (cur && cur.pid !== pid) return;
   try {
-    fs4.unlinkSync(file);
+    fs5.unlinkSync(file);
   } catch {
   }
 }
@@ -4611,48 +4664,6 @@ function childEnv(env = process.env, extra = {}) {
   return { ...out, ...extra };
 }
 
-// packages/event-bridge/src/claude-path.ts
-import fs5 from "node:fs";
-import path5 from "node:path";
-var DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD";
-function systemRoot(env = process.env) {
-  const v = envGet(env, "SYSTEMROOT") ?? envGet(env, "WINDIR");
-  return v && /^[A-Za-z]:[\\/]/.test(v) && !v.includes('"') ? v : "C:\\Windows";
-}
-function envGet(env, name) {
-  const k = Object.keys(env).find((x) => x.toUpperCase() === name);
-  return k ? env[k] : void 0;
-}
-function resolveClaude(env = process.env, platform = process.platform) {
-  const win = platform === "win32";
-  const entries = (envGet(env, "PATH") ?? "").split(win ? ";" : ":");
-  const names = win ? (envGet(env, "PATHEXT") ?? DEFAULT_PATHEXT).split(";").filter(Boolean).map((e) => "claude" + e.toLowerCase()) : ["claude"];
-  for (const raw of entries) {
-    const dir = raw.replace(/^"|"$/g, "");
-    if (!dir || dir === "." || !path5.isAbsolute(dir)) continue;
-    for (const name of names) {
-      const f = path5.join(dir, name);
-      try {
-        if (!fs5.statSync(f).isFile()) continue;
-        if (!win) fs5.accessSync(f, fs5.constants.X_OK);
-        if (f.includes('"')) continue;
-        return f;
-      } catch {
-      }
-    }
-  }
-  return void 0;
-}
-function claudeCommand(exe, sessionId, env = process.env, platform = process.platform) {
-  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new Error("bad session id");
-  if (platform === "win32" && /\.(cmd|bat)$/i.test(exe)) {
-    const comspec = envGet(env, "COMSPEC");
-    const cmd = comspec && /^[A-Za-z]:[\\/]/.test(comspec) ? comspec : path5.win32.join(systemRoot(env), "System32", "cmd.exe");
-    return { file: cmd, args: `/d /s /c ""${exe}" --session-id ${sessionId}"` };
-  }
-  return { file: exe, args: ["--session-id", sessionId] };
-}
-
 // packages/event-bridge/src/terminal.ts
 function loadPty(candidates) {
   const req = createRequire(import.meta.url);
@@ -4684,6 +4695,8 @@ var Terminal = class {
   st;
   cols = 100;
   rows = 30;
+  /** Marks the hooks of the claude started here (ONECARAT_OFFICE_TERMINAL in its environment). New per start. */
+  runId;
   command;
   constructor(opts) {
     this.opts = opts;
@@ -4694,7 +4707,7 @@ var Terminal = class {
       claudePath = resolveClaude(opts.env ?? process.env);
       if (claudePath) {
         const exe = claudePath;
-        this.command = (sid) => claudeCommand(exe, sid, opts.env ?? process.env);
+        this.command = (sid, mode) => claudeCommand(exe, sid, opts.env ?? process.env, process.platform, mode);
       } else if (!reason) reason = "claude was not found on PATH";
     }
     this.st = { available: !reason, reason, running: false, cwd: opts.cwd, claudePath };
@@ -4717,11 +4730,15 @@ var Terminal = class {
     this.st = { ...this.st, ...patch };
     this.emit({ t: "state", state: this.state });
   }
-  /** Start `claude` (optionally in another folder). Returns an error string, or undefined on success. */
-  start(cwd) {
+  /**
+   * Start `claude` (optionally in another folder; as a new conversation, the folder's latest one, or with
+   * Claude Code's picker of past ones). Returns an error string, or undefined on success.
+   */
+  start(cwd, mode = "new") {
     if (!this.opts.load.ok) return this.opts.load.reason;
     if (!this.command) return this.st.reason ?? "claude was not found on PATH";
     if (this.proc) return "already running";
+    if (!isStartMode(mode)) return "unknown start mode";
     if (cwd !== void 0 && !isLocalAbsolute(cwd)) return "not a local folder";
     const dir = cwd ?? this.st.cwd;
     try {
@@ -4730,7 +4747,8 @@ var Terminal = class {
       return "folder not found";
     }
     const sessionId = crypto3.randomUUID();
-    const { file, args: args2 } = this.command(sessionId);
+    const runId = crypto3.randomUUID();
+    const { file, args: args2 } = this.command(sessionId, mode);
     this.clearScrollback();
     let proc;
     try {
@@ -4741,12 +4759,15 @@ var Terminal = class {
         cwd: dir,
         // NoDefaultCurrentDirectoryInExePath: defense in depth for the shells claude itself starts (cmd.exe would
         // otherwise look in the working folder first).
-        env: childEnv(this.opts.env ?? process.env, { COLORTERM: "truecolor", ...process.platform === "win32" ? { NoDefaultCurrentDirectoryInExePath: "1" } : {} })
+        // ONECARAT_OFFICE_TERMINAL: inherited by this claude's hooks, so the forwarder can say "this event comes
+        // from the built-in terminal" (adoptSession). A marker, not a secret.
+        env: childEnv(this.opts.env ?? process.env, { COLORTERM: "truecolor", ONECARAT_OFFICE_TERMINAL: runId, ...process.platform === "win32" ? { NoDefaultCurrentDirectoryInExePath: "1" } : {} })
       });
     } catch (e) {
       return e.message.split("\n")[0];
     }
     this.proc = proc;
+    this.runId = runId;
     proc.onData((d) => {
       if (this.proc !== proc) return;
       this.chunks.push(d);
@@ -4760,8 +4781,18 @@ var Terminal = class {
       this.proc = void 0;
       this.setState({ running: false, exitCode });
     });
-    this.setState({ running: true, cwd: dir, sessionId, exitCode: void 0 });
+    this.setState({ running: true, cwd: dir, sessionId: mode === "new" ? sessionId : void 0, mode, exitCode: void 0 });
     return void 0;
+  }
+  /**
+   * A SessionStart hook arrived from the claude running here (its forwarder sent this run's marker): that is the
+   * session to follow. This is how a continued or picked conversation gets its id, and how the view keeps up
+   * when the user switches conversation inside the terminal (/resume, /clear). Events of other runs are ignored.
+   */
+  adoptSession(runId, sessionId) {
+    if (!this.proc || !this.runId || runId !== this.runId) return;
+    if (typeof sessionId !== "string" || !sessionId || sessionId.length > 200 || sessionId === this.st.sessionId) return;
+    this.setState({ sessionId });
   }
   /** Keystrokes typed by the user in the Office tab. Office itself never calls this with its own input. */
   write(d) {
@@ -4801,7 +4832,7 @@ function whenTerminalEnds(term, delayMs, onEnd) {
     if (running) {
       clearTimeout(timer);
       timer = void 0;
-    } else if (wasRunning && !timer) {
+    } else if (wasRunning && !timer && (!m.state.mode || m.state.mode === "new" || m.state.sessionId)) {
       timer = setTimeout(() => {
         timer = void 0;
         if (!term.state.running) onEnd();
@@ -4870,7 +4901,7 @@ function openWithKey(url, platform = process.platform, env = process.env) {
 }
 
 // packages/event-bridge/src/main.ts
-var VERSION = "0.2.6";
+var VERSION = "0.2.7";
 var DEFAULT_PORT = 47821;
 var args = process.argv.slice(2);
 var flag = (name) => args.includes(`--${name}`);

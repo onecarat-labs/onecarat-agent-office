@@ -88,3 +88,12 @@ export function pickHookFields(input) {
   }
   return out;
 }
+
+/**
+ * Office's built-in terminal starts `claude` with ONECARAT_OFFICE_TERMINAL=<run id> (a marker, not a secret), and
+ * hooks inherit it. Passing it on lets Office follow the session of that terminal, also after --continue/--resume.
+ */
+export function terminalMarker(env = process.env) {
+  const v = env.ONECARAT_OFFICE_TERMINAL;
+  return typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v) ? { 'x-office-terminal': v } : {};
+}

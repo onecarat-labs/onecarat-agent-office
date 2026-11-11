@@ -111,9 +111,14 @@ export function App() {
   sessionIdRef.current = sessionId;
   const termRunning = !!term.state?.running;
   const termExit = term.state?.exitCode;
+  // "Continue" / "pick a past session" that ended before a conversation opened (nothing to continue, picker
+  // closed) is not a goodbye: no session ran in the terminal.
+  const termHadSession = !term.state?.mode || term.state.mode === 'new' || !!term.state.sessionId;
+  const termHadSessionRef = useRef(termHadSession);
+  termHadSessionRef.current = termHadSession;
   const wasRunning = useRef(false);
   useEffect(() => {
-    if (wasRunning.current && !termRunning && termExit === 0) sayGoodbye(sessionIdRef.current);
+    if (wasRunning.current && !termRunning && termExit === 0 && termHadSessionRef.current) sayGoodbye(sessionIdRef.current);
     wasRunning.current = termRunning;
   }, [termRunning, termExit, sayGoodbye]);
   // The shown session is over: SessionEnd seen (not /clear), or it ran in the built-in terminal that has stopped
@@ -251,7 +256,7 @@ export function App() {
           ) : null}
         </div>
         <div className="bottom">
-          <TerminalPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => sayGoodbye(sessionId)} officeStopped={stopped} />
+          <TerminalPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => { if (termHadSession) sayGoodbye(sessionId); }} officeStopped={stopped} />
           <ConsolePanel session={session} selectedId={selectedId} onSelect={onSelect} lang={lang} max={maxPane === 'console'} onMax={() => toggleMax('console')} />
         </div>
       </main>

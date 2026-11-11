@@ -11,6 +11,7 @@ import type { Terminal, TerminalMessage } from './terminal.ts';
 import { scanConfig } from './config-scan.ts';
 import { NONCE_RE, healthProof } from './proof.ts';
 import { isLocalDir } from './local-dir.ts';
+import { isStartMode } from './claude-path.ts';
 
 export interface BridgeOptions {
   port: number;
@@ -93,7 +94,11 @@ export function createBridge(opts: BridgeOptions): Bridge {
         // Answer first: the hook must never wait on Office's own processing.
         send(res, 200, '{}');
         stats.received++;
-        reorder.push(eventsFromHookBody(body, header(req, 'x-office-hook-time')));
+        const events = eventsFromHookBody(body, header(req, 'x-office-hook-time'));
+        // Hooks of the claude in the built-in terminal carry that run's marker: its SessionStart names the session.
+        const run = header(req, 'x-office-terminal');
+        if (run && opts.terminal) for (const e of events) if (e.type === 'session.started') opts.terminal.adoptSession(run, e.sessionId);
+        reorder.push(events);
       } catch (e) {
         stats.rejected++;
         if (!res.headersSent) send(res, e instanceof BodyTooLarge ? 413 : 400, '{}');
@@ -221,7 +226,7 @@ function header(req: http.IncomingMessage, name: string): string | undefined {
   return Array.isArray(v) ? v[0] : v;
 }
 
-type ClientMessage = { t: 'in'; d: string } | { t: 'resize'; cols: number; rows: number } | { t: 'start'; cwd?: string } | { t: 'stop' };
+type ClientMessage = { t: 'in'; d: string } | { t: 'resize'; cols: number; rows: number } | { t: 'start'; cwd?: string; mode?: unknown } | { t: 'stop' };
 
 function attachTerminal(ws: WebSocket, term: Terminal) {
   const out = (m: TerminalMessage) => {
@@ -239,7 +244,8 @@ function attachTerminal(ws: WebSocket, term: Terminal) {
       if (m.t === 'in' && typeof m.d === 'string') term.write(m.d);
       else if (m.t === 'resize') term.resize(m.cols, m.rows);
       else if (m.t === 'start') {
-        const err = term.start(typeof m.cwd === 'string' && m.cwd ? m.cwd : undefined);
+        // mode is one of three fixed words (new / continue / resume); anything else is refused, never passed on.
+        const err = m.mode === undefined || isStartMode(m.mode) ? term.start(typeof m.cwd === 'string' && m.cwd ? m.cwd : undefined, m.mode) : 'unknown start mode';
         if (err) out({ t: 'state', state: { ...term.state, reason: err } });
       } else if (m.t === 'stop') term.stop();
     } catch {
