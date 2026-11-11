@@ -40,7 +40,7 @@ Installing the plugin without Node.js does not break Claude Code: the hooks are 
 
 ## Use
 
-- **Chat → Terminal**: press "Start Claude Code here". The real interactive `claude` starts in the folder shown (by default, the folder of the session that started Office; "Other folders" switches). "Continue last session" reopens the most recent conversation of that folder (`claude --continue`), and "Pick a past session" shows Claude Code's own list of past conversations in the terminal (`claude --resume`). Type requests and answer permission prompts there, as in any terminal. The office above follows that session.
+- **Chat → Terminal**: press "Start Claude Code here". The real interactive `claude` starts in the folder shown (by default, the folder of the session that started Office; "Other folders" switches). "Continue last session" reopens the most recent conversation of that folder (`claude --continue`), and "Pick a past session" shows Claude Code's own list of past conversations in the terminal (`claude --resume`). Type requests and answer permission prompts there, as in any terminal. The office above follows that session. While Claude Code uses the mouse itself, a right click goes to Claude Code only; hold Shift to select text or to open the browser's copy / paste menu.
 - Or just use Claude Code as usual: terminal, IDE extension or Desktop app all show up the same way.
 - The most active session is shown; switch with the Sessions button on the left.
 - Click a figure to see the real events behind its state in the Console panel.

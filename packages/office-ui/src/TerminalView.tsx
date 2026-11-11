@@ -38,9 +38,19 @@ export function TerminalView({ term, label }: { term: TerminalLink; label: strin
     ro.observe(el);
     refit();
     const sub = xt.onData((d) => send({ t: 'in', d }));
+    // While claude has mouse reporting on, a right click is already sent to it as a button press; xterm would
+    // still let the browser menu open on top. Give the click to claude only. Shift+right click keeps the browser
+    // menu (copy/paste), matching xterm's "Shift forces selection" rule.
+    const onContextMenu = (ev: MouseEvent) => {
+      if (ev.shiftKey || xt.modes.mouseTrackingMode === 'none') return;
+      ev.preventDefault();
+      ev.stopPropagation();
+    };
+    el.addEventListener('contextmenu', onContextMenu, true);
     attach({ write: (d) => xt.write(d), reset: () => xt.reset() });
     return () => {
       attach(undefined);
+      el.removeEventListener('contextmenu', onContextMenu, true);
       sub.dispose();
       ro.disconnect();
       xt.dispose();
