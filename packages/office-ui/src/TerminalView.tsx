@@ -5,17 +5,22 @@ import '@xterm/xterm/css/xterm.css';
 import type { TerminalLink } from './live/useTerminal.ts';
 
 /** xterm.js view of the embedded `claude`. Keystrokes go to the terminal only when the user types them. */
-export function TerminalView({ term, label }: { term: TerminalLink; label: string }) {
+const BASE_FONT = 13;
+
+export function TerminalView({ term, label, fontScale = 1 }: { term: TerminalLink; label: string; fontScale?: number }) {
   const host = useRef<HTMLDivElement>(null);
   const x = useRef<XTerm | undefined>(undefined);
   const fitRef = useRef<FitAddon | undefined>(undefined);
   const { send, attach } = term;
+  const fontSize = Math.round(BASE_FONT * fontScale);
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
 
   useEffect(() => {
     const el = host.current!;
     const xt = new XTerm({
       fontFamily: "'Cascadia Mono', Consolas, Menlo, 'DejaVu Sans Mono', monospace",
-      fontSize: 13,
+      fontSize: fontSizeRef.current,
       cursorBlink: true,
       scrollback: 5000,
       // Claude Code draws for a dark terminal by default; keep one fixed dark palette in both page themes.
@@ -57,6 +62,19 @@ export function TerminalView({ term, label }: { term: TerminalLink; label: strin
       x.current = undefined;
     };
   }, [send, attach]);
+
+  // Text size changed in the settings: same pane, different cols/rows.
+  useEffect(() => {
+    const xt = x.current;
+    if (!xt || xt.options.fontSize === fontSize) return;
+    xt.options.fontSize = fontSize;
+    try {
+      fitRef.current?.fit();
+      send({ t: 'resize', cols: xt.cols, rows: xt.rows });
+    } catch {
+      /* not laid out (pane hidden): the ResizeObserver refits when it shows */
+    }
+  }, [fontSize, send]);
 
   // Tell the pty our size again whenever a link (re)opens or claude (re)starts.
   useEffect(() => {

@@ -38,6 +38,7 @@
 9. Disable / uninstall the plugin → hooks gone; `~/.claude/settings.json` has no leftover Office hooks.
 10. Light/dark, 390 px width, keyboard (Tab / ←→ / Enter), reduced motion.
 11. Settings (gear): menu / list / detail. Office → Display changes theme, motion and language at once and keeps them after a reload. Each Claude Code topic lists its locations with the in-use count; the folder selector and Reload re-read; nothing is editable.
+12. Area sizes and text size: drag the border between the office and the lower areas (height) and between the terminal and the console (width); arrow keys on a focused border; double-click resets that border. Settings → Office → Display → Text size (80–160%, also the built-in terminal) and Area sizes, each with "Reset to default". All of it is kept after a reload and after Office is restarted. Automated: `node tests/screenshots/check-layout.mjs <outDir>`.
 
 ## Not yet verified
 - macOS (the prebuild is shipped but untested) and Linux (read-only by design today).

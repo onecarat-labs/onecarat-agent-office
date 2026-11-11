@@ -4,10 +4,10 @@ import { useLiveFeed } from './live/useLiveFeed.ts';
 import { useTerminal } from './live/useTerminal.ts';
 import { authHeaders } from './live/token.ts';
 import { FAREWELL_MS, Stage, useStageKeyboard } from './office/Stage.tsx';
-import { ConsolePanel, MaxToggle, TerminalPanel } from './panels.tsx';
+import { ConsolePanel, MaxToggle, SPLIT_MAX, SPLIT_MIN, Splitter, TerminalPanel } from './panels.tsx';
 import { useDemoPlayer } from './demo/useDemoPlayer.ts';
 import { IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
-import { SettingsView, type Motion, type Theme } from './config/SettingsView.tsx';
+import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN, SettingsView, type Motion, type Theme } from './config/SettingsView.tsx';
 import { detectLang, dict, type Lang } from './i18n.ts';
 
 type Pane = 'stage' | 'terminal' | 'console';
@@ -26,6 +26,17 @@ function save(key: string, v: string) {
     /* storage unavailable: keep in memory only */
   }
 }
+
+/** A stored number, or the fallback when missing, unreadable or out of range. */
+function loadNum(key: string, fallback: number, min: number, max: number): number {
+  const raw = load<string>(key, '');
+  const v = Number(raw);
+  return raw !== '' && Number.isFinite(v) && v >= min && v <= max ? v : fallback;
+}
+
+// Default sizes of the three areas: the office takes 1.25 of 2.25 of the height, terminal and console share the width.
+const STAGE_SPLIT_DEFAULT = 1.25 / 2.25;
+const TERM_SPLIT_DEFAULT = 0.5;
 
 function lastActivity(s: SessionState | undefined): number {
   if (!s) return 0;
@@ -55,6 +66,12 @@ export function App() {
   const [lang, setLang] = useState<Lang>(() => load<Lang>('office.lang', detectLang()));
   const [theme, setTheme] = useState<Theme>(() => load<Theme>('office.theme', 'system'));
   const [motionPref, setMotionPref] = useState<Motion>(() => load<Motion>('office.motion', 'system'));
+  // Sizes the user set with the mouse (borders between the three areas) and the text size; kept in this browser.
+  const [stageSplit, setStageSplit] = useState(() => loadNum('office.split.stage', STAGE_SPLIT_DEFAULT, SPLIT_MIN, SPLIT_MAX));
+  const [termSplit, setTermSplit] = useState(() => loadNum('office.split.terminal', TERM_SPLIT_DEFAULT, SPLIT_MIN, SPLIT_MAX));
+  const [fontScale, setFontScale] = useState(() => loadNum('office.fontScale', FONT_SCALE_DEFAULT, FONT_SCALE_MIN, FONT_SCALE_MAX));
+  const layoutCustom = stageSplit !== STAGE_SPLIT_DEFAULT || termSplit !== TERM_SPLIT_DEFAULT;
+  const resetLayout = useCallback(() => { setStageSplit(STAGE_SPLIT_DEFAULT); setTermSplit(TERM_SPLIT_DEFAULT); }, []);
   const [popover, setPopover] = useState<'none' | 'sessions'>('none');
   // Main area: the office, or the settings view (Office display + Claude Code configuration). The office stays
   // mounted (the terminal keeps its session).
@@ -145,6 +162,12 @@ export function App() {
     save('office.theme', theme);
   }, [theme]);
   useEffect(() => save('office.motion', motionPref), [motionPref]);
+  useEffect(() => save('office.split.stage', String(stageSplit)), [stageSplit]);
+  useEffect(() => save('office.split.terminal', String(termSplit)), [termSplit]);
+  useEffect(() => {
+    document.documentElement.style.setProperty('--fs', String(fontScale));
+    save('office.fontScale', String(fontScale));
+  }, [fontScale]);
   useEffect(() => {
     save('office.lang', lang);
     document.documentElement.lang = lang;
@@ -218,8 +241,8 @@ export function App() {
         </div>
       ) : null}
 
-      {view === 'settings' ? <SettingsView lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} motion={motionPref} setMotion={setMotionPref} cwds={cwds} live={liveOk && !stopped} /> : null}
-      <main className={`main${maxPane ? ` max-${maxPane}` : ''}${view === 'settings' ? ' hidden' : ''}`}>
+      {view === 'settings' ? <SettingsView lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} motion={motionPref} setMotion={setMotionPref} fontScale={fontScale} setFontScale={setFontScale} layout={{ stage: stageSplit, terminal: termSplit, custom: layoutCustom }} resetLayout={resetLayout} cwds={cwds} live={liveOk && !stopped} /> : null}
+      <main className={`main${maxPane ? ` max-${maxPane}` : ''}${view === 'settings' ? ' hidden' : ''}`} style={{ '--stage-fr': `${stageSplit * 100}fr`, '--bottom-fr': `${(1 - stageSplit) * 100}fr`, '--term-fr': `${termSplit * 100}fr`, '--console-fr': `${(1 - termSplit) * 100}fr` } as React.CSSProperties}>
         <div className="stage" onKeyDown={onStageKey}>
           <MaxToggle on={maxPane === 'stage'} onToggle={() => toggleMax('stage')} lang={lang} className="stage-max" />
           <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onSelect} motion={motion} lang={lang} demo={isDemo} farewellAt={farewell?.at} ended={sessionOver} /></div>
@@ -232,8 +255,10 @@ export function App() {
             </div>
           ) : null}
         </div>
+        <Splitter orientation="horizontal" value={stageSplit} onChange={setStageSplit} onReset={() => setStageSplit(STAGE_SPLIT_DEFAULT)} label={t.splitRows} />
         <div className="bottom">
-          <TerminalPanel session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => { if (termHadSession) sayGoodbye(sessionId); }} officeStopped={stopped} />
+          <TerminalPanel fontScale={fontScale} session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => { if (termHadSession) sayGoodbye(sessionId); }} officeStopped={stopped} />
+          <Splitter orientation="vertical" value={termSplit} onChange={setTermSplit} onReset={() => setTermSplit(TERM_SPLIT_DEFAULT)} label={t.splitCols} />
           <ConsolePanel session={session} selectedId={selectedId} onSelect={onSelect} lang={lang} max={maxPane === 'console'} onMax={() => toggleMax('console')} />
         </div>
       </main>

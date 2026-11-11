@@ -66,7 +66,7 @@ Claude Code session (terminal / IDE / Desktop app)
 - The terminal bar shows the folder and the permission mode reported by that session's hooks.
 - `live/token.ts`: reads `#t=`, removes it from the URL at once, keeps it in sessionStorage. `useLiveFeed`: reads SSE with fetch (EventSource cannot send the key header). 401 → "no access key"; reconnects every 2 s.
 - `useDemoPlayer`: replays `examples/demo-events/office-demo.json` through the same normalizeHook + reduceOffice as live.
-- English/Japanese, theme (system/light/dark), motion (system/reduce/full), saved in localStorage. Keyboard operable, aria labels.
+- English/Japanese, theme (system/light/dark), motion (system/reduce/full), text size (80–160%, also the built-in terminal; not the office picture) and the sizes of the three areas (draggable borders), saved in localStorage. Keyboard operable, aria labels.
 
 ### plugin
 - `hooks.json`: 11 events call `node ${CLAUDE_PLUGIN_ROOT}/scripts/forward.mjs` (async, timeout 5).
