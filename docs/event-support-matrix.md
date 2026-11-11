@@ -60,6 +60,7 @@
 | B1：承認プロンプトの操作 | `supported` | 手動モードで編集を依頼すると承認待ちになり、ターミナルでキーを押して許可できた（矢印・Enter・Esc） |
 | B1：日本語入力 | `supported` | IME の入力が文字化けも二重入力もせずに届いた |
 | B1：Hook の `session_id` と端末の対応 | `supported` | `claude --session-id <uuid>` で起動すると、Hook の `session_id` が一致する。UI はこの ID でセッションを追いかける |
+| B1：続きから／過去のセッション | `supported` | `claude --continue` と `claude --resume`（選択画面）で起動できる。再開後の `SessionStart`（`source: resume`）は元の `session_id` のまま届き、端末に渡した目印（`ONECARAT_OFFICE_TERMINAL`）は Hook に引き継がれる（2.1.322 で実測）。選択画面を Esc で閉じる・続きが無い場合は Hook が来ないまま終了コード 1 で終わる。`claude -p` で作った会話は `--continue` や選択画面には出ない |
 | B1：環境変数の継承 | 注意（**対処済み**） | Claude Code の中から起動すると、呼び出し元の印と私的な通信路（`CLAUDE_CODE_SESSION_ID`、`CLAUDE_CODE_MESSAGING_*` など）を引き継いでしまう。Office は起動時にそれらを外し、利用者の設定（`CLAUDE_CONFIG_DIR` など）は残す |
 | B1：許可モード | 注意 | Office はモードを渡さない。内蔵の `claude` は利用者のアカウントや設定の既定モードで起動する（auto が既定のアカウントなら auto）。UI には Hook の `permission_mode` を表示する |
 | B1：node-pty の prebuild | `partial` | 同梱：win32-x64/arm64、darwin-x64/arm64（上流の npm パッケージのまま）。**実機で確かめたのは win32-x64 だけ**。Linux は上流に prebuild が無いので、内蔵ターミナルは使えず読み取り専用で起動する |

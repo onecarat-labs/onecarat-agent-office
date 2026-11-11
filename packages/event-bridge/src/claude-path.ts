@@ -50,16 +50,30 @@ export interface SpawnSpec {
 }
 
 /**
+ * How the embedded claude starts. The page picks one of these three words; it never passes arguments.
+ *   new      — a new conversation (`--session-id <uuid>`, the id is made by the bridge)
+ *   continue — the most recent conversation of the folder (`--continue`)
+ *   resume   — Claude Code's own picker of past conversations, shown in the terminal (`--resume`)
+ */
+export const START_MODES = ['new', 'continue', 'resume'] as const;
+export type StartMode = (typeof START_MODES)[number];
+export function isStartMode(v: unknown): v is StartMode {
+  return typeof v === 'string' && (START_MODES as readonly string[]).includes(v);
+}
+
+/**
  * How to start the resolved `claude` with the arguments Office fixes. A .cmd/.bat shim (npm installs) needs
  * cmd.exe; everything else is executed directly. The path is quoted as a whole; the session id is a UUID.
  */
-export function claudeCommand(exe: string, sessionId: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): SpawnSpec {
+export function claudeCommand(exe: string, sessionId: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform, mode: StartMode = 'new'): SpawnSpec {
   if (!/^[0-9a-f-]{36}$/i.test(sessionId)) throw new Error('bad session id');
+  if (!isStartMode(mode)) throw new Error('bad start mode');
+  const argv = mode === 'continue' ? ['--continue'] : mode === 'resume' ? ['--resume'] : ['--session-id', sessionId];
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(exe)) {
     // cmd.exe by absolute path: a bare name would be looked up in the working folder first.
     const comspec = envGet(env, 'COMSPEC');
     const cmd = comspec && /^[A-Za-z]:[\\/]/.test(comspec) ? comspec : path.win32.join(systemRoot(env), 'System32', 'cmd.exe');
-    return { file: cmd, args: `/d /s /c ""${exe}" --session-id ${sessionId}"` };
+    return { file: cmd, args: `/d /s /c ""${exe}" ${argv.join(' ')}"` };
   }
-  return { file: exe, args: ['--session-id', sessionId] };
+  return { file: exe, args: argv };
 }

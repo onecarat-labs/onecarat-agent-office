@@ -7,10 +7,13 @@ export interface TermState {
   running: boolean;
   cwd: string;
   sessionId?: string;
+  mode?: StartMode;
   exitCode?: number;
 }
+/** new conversation / the folder's most recent one / Claude Code's picker of past ones. */
+export type StartMode = 'new' | 'continue' | 'resume';
 export type TermLink = 'connecting' | 'open' | 'closed';
-export type TermSend = (m: { t: 'in'; d: string } | { t: 'resize'; cols: number; rows: number } | { t: 'start'; cwd?: string } | { t: 'stop' }) => void;
+export type TermSend = (m: { t: 'in'; d: string } | { t: 'resize'; cols: number; rows: number } | { t: 'start'; cwd?: string; mode?: StartMode } | { t: 'stop' }) => void;
 export interface TermSink {
   write(d: string): void;
   reset(): void;

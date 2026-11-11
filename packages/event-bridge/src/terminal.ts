@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { childEnv } from './child-env.ts';
-import { claudeCommand, resolveClaude, type SpawnSpec } from './claude-path.ts';
+import { claudeCommand, isStartMode, resolveClaude, type SpawnSpec, type StartMode } from './claude-path.ts';
 import { isLocalAbsolute } from './local-dir.ts';
 
 export interface PtyProcess {
@@ -54,8 +54,14 @@ export interface TerminalState {
   reason?: string;
   running: boolean;
   cwd: string;
-  /** --session-id given to the embedded claude, so the UI can follow that session's hook events. */
+  /**
+   * Session of the embedded claude, so the UI can follow its hook events. A new conversation gets the id the
+   * bridge passed as --session-id. A continued or picked one is not known at start: it is filled in when that
+   * claude's own SessionStart hook arrives (see adoptSession).
+   */
   sessionId?: string;
+  /** How the current (or last) claude was started. */
+  mode?: StartMode;
   exitCode?: number;
   /** Absolute path of the claude that is started (resolved from PATH once; never from the working folder). */
   claudePath?: string;
@@ -67,7 +73,7 @@ export interface TerminalOptions {
   load: PtyLoad;
   cwd: string;
   /** What to run. Fixed by the bridge; never taken from the UI. Default: the user's `claude`, by absolute path. */
-  command?: (sessionId: string) => SpawnSpec;
+  command?: (sessionId: string, mode: StartMode) => SpawnSpec;
   scrollbackBytes?: number;
   env?: NodeJS.ProcessEnv;
 }
@@ -82,7 +88,10 @@ export class Terminal {
   private cols = 100;
   private rows = 30;
 
-  private readonly command: ((sessionId: string) => SpawnSpec) | undefined;
+  /** Marks the hooks of the claude started here (ONECARAT_OFFICE_TERMINAL in its environment). New per start. */
+  private runId: string | undefined;
+
+  private readonly command: ((sessionId: string, mode: StartMode) => SpawnSpec) | undefined;
 
   constructor(opts: TerminalOptions) {
     this.opts = opts;
@@ -93,7 +102,7 @@ export class Terminal {
       claudePath = resolveClaude(opts.env ?? process.env);
       if (claudePath) {
         const exe = claudePath;
-        this.command = (sid) => claudeCommand(exe, sid, opts.env ?? process.env);
+        this.command = (sid, mode) => claudeCommand(exe, sid, opts.env ?? process.env, process.platform, mode);
       } else if (!reason) reason = 'claude was not found on PATH';
     }
     this.st = { available: !reason, reason, running: false, cwd: opts.cwd, claudePath };
@@ -122,11 +131,15 @@ export class Terminal {
     this.emit({ t: 'state', state: this.state });
   }
 
-  /** Start `claude` (optionally in another folder). Returns an error string, or undefined on success. */
-  start(cwd?: string): string | undefined {
+  /**
+   * Start `claude` (optionally in another folder; as a new conversation, the folder's latest one, or with
+   * Claude Code's picker of past ones). Returns an error string, or undefined on success.
+   */
+  start(cwd?: string, mode: StartMode = 'new'): string | undefined {
     if (!this.opts.load.ok) return this.opts.load.reason;
     if (!this.command) return this.st.reason ?? 'claude was not found on PATH';
     if (this.proc) return 'already running';
+    if (!isStartMode(mode)) return 'unknown start mode';
     // A folder named by the page must be absolute and local (no relative paths, no \\host\share).
     if (cwd !== undefined && !isLocalAbsolute(cwd)) return 'not a local folder';
     const dir = cwd ?? this.st.cwd;
@@ -136,7 +149,8 @@ export class Terminal {
       return 'folder not found';
     }
     const sessionId = crypto.randomUUID();
-    const { file, args } = this.command(sessionId);
+    const runId = crypto.randomUUID();
+    const { file, args } = this.command(sessionId, mode);
     this.clearScrollback();
     let proc: PtyProcess;
     try {
@@ -147,12 +161,15 @@ export class Terminal {
         cwd: dir,
         // NoDefaultCurrentDirectoryInExePath: defense in depth for the shells claude itself starts (cmd.exe would
         // otherwise look in the working folder first).
-        env: childEnv(this.opts.env ?? process.env, { COLORTERM: 'truecolor', ...(process.platform === 'win32' ? { NoDefaultCurrentDirectoryInExePath: '1' } : {}) }),
+        // ONECARAT_OFFICE_TERMINAL: inherited by this claude's hooks, so the forwarder can say "this event comes
+        // from the built-in terminal" (adoptSession). A marker, not a secret.
+        env: childEnv(this.opts.env ?? process.env, { COLORTERM: 'truecolor', ONECARAT_OFFICE_TERMINAL: runId, ...(process.platform === 'win32' ? { NoDefaultCurrentDirectoryInExePath: '1' } : {}) }),
       });
     } catch (e) {
       return (e as Error).message.split('\n')[0];
     }
     this.proc = proc;
+    this.runId = runId;
     proc.onData((d) => {
       if (this.proc !== proc) return;
       this.chunks.push(d);
@@ -166,8 +183,19 @@ export class Terminal {
       this.proc = undefined;
       this.setState({ running: false, exitCode });
     });
-    this.setState({ running: true, cwd: dir, sessionId, exitCode: undefined });
+    this.setState({ running: true, cwd: dir, sessionId: mode === 'new' ? sessionId : undefined, mode, exitCode: undefined });
     return undefined;
+  }
+
+  /**
+   * A SessionStart hook arrived from the claude running here (its forwarder sent this run's marker): that is the
+   * session to follow. This is how a continued or picked conversation gets its id, and how the view keeps up
+   * when the user switches conversation inside the terminal (/resume, /clear). Events of other runs are ignored.
+   */
+  adoptSession(runId: string, sessionId: string): void {
+    if (!this.proc || !this.runId || runId !== this.runId) return;
+    if (typeof sessionId !== 'string' || !sessionId || sessionId.length > 200 || sessionId === this.st.sessionId) return;
+    this.setState({ sessionId });
   }
 
   /** Keystrokes typed by the user in the Office tab. Office itself never calls this with its own input. */
@@ -208,7 +236,9 @@ export class Terminal {
 /**
  * Calls onEnd once the embedded claude has ended (/exit, the Stop button, or a crash) and was not started again
  * within delayMs. The delay lets the last hooks (SessionEnd) reach the UI and covers "restart in this folder",
- * which stops and starts right away. Returns a function that cancels it.
+ * which stops and starts right away. A "continue" or "pick a past session" start that ended before any
+ * conversation was opened (nothing to continue, picker closed) does not count: the user can start again.
+ * Returns a function that cancels it.
  */
 export function whenTerminalEnds(term: Terminal, delayMs: number, onEnd: () => void): () => void {
   let wasRunning = term.state.running;
@@ -219,7 +249,7 @@ export function whenTerminalEnds(term: Terminal, delayMs: number, onEnd: () => v
     if (running) {
       clearTimeout(timer);
       timer = undefined;
-    } else if (wasRunning && !timer) {
+    } else if (wasRunning && !timer && (!m.state.mode || m.state.mode === 'new' || m.state.sessionId)) {
       timer = setTimeout(() => {
         timer = undefined;
         if (!term.state.running) onEnd();

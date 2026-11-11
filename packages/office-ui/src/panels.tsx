@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { TerminalView } from './TerminalView.tsx';
-import type { TerminalLink } from './live/useTerminal.ts';
+import type { StartMode, TerminalLink } from './live/useTerminal.ts';
 import { MANAGER_ID, type AgentState, type SessionState } from '@onecarat/domain';
 import { IconChat, IconConsole, IconMaximize, IconRestore, IconSend, IconSmile, IconTerminal, IconUser } from './icons.tsx';
 import { dict, displayName, modeText, outcomeText, statusText, bubbleText, type Lang } from './i18n.ts';
@@ -53,10 +53,12 @@ function TerminalPane({ term, lang, cwds, mode, onStop, officeStopped }: { term:
   const [folder, setFolder] = useState('');
   const cur = st?.cwd ?? '';
   const others = cwds.filter((c) => c && c !== cur);
-  const startIn = (dir?: string) => {
+  // How a start in another folder begins (the three buttons of the bar cover the current folder).
+  const [folderMode, setFolderMode] = useState<StartMode>('new');
+  const startIn = (dir?: string, mode: StartMode = 'new') => {
     if (st?.running && !window.confirm(t.termConfirmRestart)) return;
     if (st?.running) term.send({ t: 'stop' });
-    term.send({ t: 'start', cwd: dir });
+    term.send({ t: 'start', cwd: dir, mode });
   };
   return (
     <>
@@ -70,15 +72,27 @@ function TerminalPane({ term, lang, cwds, mode, onStop, officeStopped }: { term:
         {st?.running ? (
           <button className="btn" onClick={() => { onStop?.(); term.send({ t: 'stop' }); }}>{t.termStop}</button>
         ) : (
-          <button className="btn primary" disabled={term.link !== 'open'} onClick={() => startIn()}>{t.termStart}</button>
+          <>
+            <button className="btn primary" disabled={term.link !== 'open'} onClick={() => startIn()}>{t.termStart}</button>
+            <button className="btn" disabled={term.link !== 'open'} title={t.termContinueHint} onClick={() => startIn(undefined, 'continue')}>{t.termContinue}</button>
+            <button className="btn" disabled={term.link !== 'open'} title={t.termResumeHint} onClick={() => startIn(undefined, 'resume')}>{t.termResume}</button>
+          </>
         )}
         <details className="term-other">
           <summary>{t.termFolderPick}</summary>
           <div className="term-other-body">
             {others.map((c) => (
-              <button key={c} className="sess-item" title={c} onClick={() => startIn(c)}>{c}</button>
+              <button key={c} className="sess-item" title={c} onClick={() => startIn(c, folderMode)}>{c}</button>
             ))}
-            <form onSubmit={(e) => { e.preventDefault(); if (folder.trim()) startIn(folder.trim()); }}>
+            <label className="term-mode">
+              {t.termModeLabel}
+              <select value={folderMode} onChange={(e) => setFolderMode(e.target.value as StartMode)}>
+                <option value="new">{t.termModeNew}</option>
+                <option value="continue">{t.termContinue}</option>
+                <option value="resume">{t.termResume}</option>
+              </select>
+            </label>
+            <form onSubmit={(e) => { e.preventDefault(); if (folder.trim()) startIn(folder.trim(), folderMode); }}>
               <input value={folder} onChange={(e) => setFolder(e.target.value)} placeholder={'C:\\path\\to\\project'} aria-label={t.termFolder} />
               <button className="btn" type="submit" disabled={!folder.trim()}>{t.termRestart}</button>
             </form>

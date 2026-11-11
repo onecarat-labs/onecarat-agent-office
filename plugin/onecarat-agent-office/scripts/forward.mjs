@@ -7,7 +7,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
-import { looksStale, pickHookFields, proofMatches, runtimeFilePath } from './forward-lib.mjs';
+import { looksStale, pickHookFields, proofMatches, runtimeFilePath, terminalMarker } from './forward-lib.mjs';
 
 const hookTime = Date.now();
 const done = () => process.exit(0);
@@ -78,6 +78,7 @@ function post(body) {
         'content-length': body.length,
         'x-office-token': info.token,
         'x-office-hook-time': String(hookTime),
+        ...terminalMarker(),
       },
     },
     (res) => {
