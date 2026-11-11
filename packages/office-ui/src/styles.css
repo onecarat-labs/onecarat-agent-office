@@ -330,21 +330,32 @@ button { font: inherit; color: inherit; }
 
 .live-waiting { position: absolute; left: 50%; top: 58%; transform: translate(-50%, -50%); max-width: min(560px, 90%); text-align: center; padding: 10px 16px; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--border); color: var(--muted); }
 
-/* ---------- Claude Code configuration view ---------- */
+/* ---------- Settings view: menu / list / detail ---------- */
 .main.hidden { display: none; }
 .config-view { display: flex; flex-direction: column; gap: 8px; padding: 12px; min-height: 0; min-width: 0; }
-.cfg-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cfg-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-height: 30px; }
 .cfg-head h2 { margin: 0; font-size: 17px; }
 .cfg-head .sub { color: var(--muted); font-size: 12.5px; }
 .cfg-head .spacer { flex: 1; }
 .cfg-folder { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); min-width: 0; }
 .cfg-folder select { font: inherit; max-width: min(420px, 60vw); background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
 .cfg-note { margin: 0; font-size: 12.5px; color: var(--muted); }
-.cfg-body { flex: 1; display: grid; grid-template-columns: minmax(240px, 320px) minmax(0, 1fr); gap: 12px; min-height: 0; }
+.cfg-body { flex: 1; display: grid; grid-template-columns: 188px minmax(240px, 300px) minmax(0, 1fr); gap: 12px; min-height: 0; }
+.cfg-menu { overflow: auto; min-height: 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; }
+.cfg-menu h3 { margin: 6px 8px 4px; font-size: 11.5px; font-weight: 600; color: var(--muted); letter-spacing: 0.04em; }
+.cfg-menu-item + h3 { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.cfg-menu-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left; padding: 6px 8px; margin-top: 2px; border-radius: 6px; border: 1px solid transparent; background: transparent; cursor: pointer; font-size: 13.5px; }
+.cfg-menu-item:hover { background: var(--accent-soft); }
+.cfg-menu-item[aria-current='true'] { background: var(--accent); color: #fff; font-weight: 600; }
+.cfg-menu-item .count { font-size: 11.5px; font-weight: 400; color: var(--muted); font-variant-numeric: tabular-nums; }
+.cfg-menu-item[aria-current='true'] .count { color: inherit; opacity: 0.85; }
+.cfg-list-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 2px 0 8px; border-bottom: 1px solid var(--border); }
+.cfg-list-head h3 { margin: 0; font-size: 14.5px; }
+.cfg-list-head .sub { font-size: 11.5px; color: var(--muted); }
+.cfg-list-head p { flex-basis: 100%; margin: 0; font-size: 11.5px; color: var(--muted); }
 .cfg-list { overflow: auto; min-height: 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px 10px; }
-.cfg-layer + .cfg-layer { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
-.cfg-layer h3 { margin: 2px 0 0; font-size: 13.5px; }
-.cfg-layer p { margin: 2px 0 6px; font-size: 11.5px; color: var(--muted); }
+.cfg-layer { margin-top: 10px; }
+.cfg-layer h4 { margin: 0 0 2px; font-size: 11.5px; font-weight: 600; color: var(--muted); }
 .cfg-item { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 5px 8px; margin-top: 3px; border-radius: 6px; border: 1px solid transparent; background: transparent; cursor: pointer; }
 .cfg-item:hover { background: var(--accent-soft); }
 .cfg-item[aria-current='true'] { border-color: var(--accent); background: var(--accent-soft); }
@@ -357,10 +368,14 @@ button { font: inherit; color: inherit; }
 .cfg-item.st-error .dot { background: var(--danger); border-color: var(--danger); }
 .cfg-item.st-error .state { color: var(--danger); }
 .cfg-item.st-missing .name { color: var(--muted); }
+.cfg-item.plain { grid-template-columns: minmax(0, 1fr) auto; padding: 7px 8px; }
+.cfg-item.plain .name { font: 13.5px var(--font); }
 .cfg-precedence { margin: 12px 0 0; font-size: 11.5px; color: var(--muted); }
 .cfg-detail { min-height: 0; }
 .cfg-detail-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 14px 6px; }
 .cfg-detail-head h3 { margin: 0 6px 0 0; font: 600 15px var(--mono); word-break: break-all; }
+.cfg-detail-head.ruled { padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.cfg-detail-head h3.plain { font-family: var(--font); }
 .cfg-path { display: flex; align-items: center; gap: 8px; padding: 0 14px 8px; border-bottom: 1px solid var(--border); min-width: 0; }
 .cfg-path code { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .cfg-scroll { flex: 1; overflow: auto; padding: 4px 14px 14px; min-height: 0; }
@@ -376,10 +391,19 @@ button { font: inherit; color: inherit; }
 .cfg-key code { font: 600 12.5px var(--mono); }
 .cfg-items { list-style: none; padding: 0 !important; display: grid; gap: 4px; }
 .cfg-items li { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.set-about { margin: 12px 0 10px !important; }
+.set-choices { display: grid; gap: 6px; max-width: 420px; margin-bottom: 12px; }
+.set-choice { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: pointer; }
+.set-choice:hover { border-color: var(--accent-line); }
+.set-choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.set-choice input { accent-color: var(--accent); margin: 0; }
 .cfg-items code { display: block; font: 11.5px var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 @media (max-width: 900px) {
   .cfg-body { grid-template-columns: 1fr; flex: none; }
-  .cfg-list { height: 42vh; min-height: 260px; }
+  .cfg-menu { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; overflow: visible; }
+  .cfg-menu h3, .cfg-menu-item + h3 { margin: 0 4px 0 6px; padding: 0; border: 0; }
+  .cfg-menu-item { width: auto; margin: 0; }
+  .cfg-list { max-height: 42vh; }
   .config-view { overflow: auto; }
   .cfg-detail { min-height: 420px; }
 }

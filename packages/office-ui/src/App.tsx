@@ -6,12 +6,10 @@ import { authHeaders } from './live/token.ts';
 import { FAREWELL_MS, Stage, useStageKeyboard } from './office/Stage.tsx';
 import { ConsolePanel, MaxToggle, TerminalPanel } from './panels.tsx';
 import { useDemoPlayer } from './demo/useDemoPlayer.ts';
-import { IconConfig, IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
-import { ConfigView } from './config/ConfigView.tsx';
+import { IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
+import { SettingsView, type Motion, type Theme } from './config/SettingsView.tsx';
 import { detectLang, dict, type Lang } from './i18n.ts';
 
-type Theme = 'system' | 'light' | 'dark';
-type Motion = 'system' | 'reduce' | 'full';
 type Pane = 'stage' | 'terminal' | 'console';
 
 function load<T extends string>(key: string, fallback: T): T {
@@ -57,9 +55,10 @@ export function App() {
   const [lang, setLang] = useState<Lang>(() => load<Lang>('office.lang', detectLang()));
   const [theme, setTheme] = useState<Theme>(() => load<Theme>('office.theme', 'system'));
   const [motionPref, setMotionPref] = useState<Motion>(() => load<Motion>('office.motion', 'system'));
-  const [popover, setPopover] = useState<'none' | 'settings' | 'sessions'>('none');
-  // Main area: the office, or the Claude Code configuration view. The office stays mounted (the terminal keeps its session).
-  const [view, setView] = useState<'office' | 'config'>('office');
+  const [popover, setPopover] = useState<'none' | 'sessions'>('none');
+  // Main area: the office, or the settings view (Office display + Claude Code configuration). The office stays
+  // mounted (the terminal keeps its session).
+  const [view, setView] = useState<'office' | 'settings'>('office');
   // One pane may fill the main area. Hidden panes stay mounted (the terminal keeps its session).
   const [maxPane, setMaxPane] = useState<Pane | undefined>(undefined);
   const toggleMax = (p: Pane) => setMaxPane((cur) => (cur === p ? undefined : p));
@@ -187,31 +186,9 @@ export function App() {
       <nav className="rail" aria-label="Main">
         <button className={`iconbtn${view === 'office' ? ' active' : ''}`} aria-current={view === 'office' ? 'page' : undefined} aria-label={t.office} title={t.office} onClick={() => { setPopover('none'); setView('office'); }}><IconHome size={22} /></button>
         <button className="iconbtn" aria-expanded={popover === 'sessions'} aria-label={t.sessions} title={t.sessions} onClick={() => setPopover(popover === 'sessions' ? 'none' : 'sessions')}><IconSessions size={22} /></button>
-        <button className="iconbtn" aria-expanded={popover === 'settings'} aria-label={t.settings} title={t.settings} onClick={() => setPopover(popover === 'settings' ? 'none' : 'settings')}><IconSettings size={22} /></button>
-        <button className={`iconbtn${view === 'config' ? ' active' : ''}`} aria-current={view === 'config' ? 'page' : undefined} aria-label={t.cfgTitle} title={t.cfgTitle} onClick={() => { setPopover('none'); setView('config'); }}><IconConfig size={22} /></button>
+        <button className={`iconbtn${view === 'settings' ? ' active' : ''}`} aria-current={view === 'settings' ? 'page' : undefined} aria-label={t.settings} title={t.settings} onClick={() => { setPopover('none'); setView('settings'); }}><IconSettings size={22} /></button>
       </nav>
 
-      {popover === 'settings' ? (
-        <div className="popover" role="dialog" aria-label={t.settings} style={{ top: 64 + 48 * 2 }}>
-          <h3>{t.settings}</h3>
-          <label>{t.theme}
-            <select value={theme} onChange={(e) => setTheme(e.target.value as Theme)}>
-              <option value="system">{t.system}</option><option value="light">{t.light}</option><option value="dark">{t.dark}</option>
-            </select>
-          </label>
-          <label>{t.motion}
-            <select value={motionPref} onChange={(e) => setMotionPref(e.target.value as Motion)}>
-              <option value="system">{t.system}</option><option value="reduce">{t.reduce}</option><option value="full">{t.full}</option>
-            </select>
-          </label>
-          <label>{t.language}
-            <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}>
-              <option value="ja">日本語</option><option value="en">English</option>
-            </select>
-          </label>
-          <p>{t.highFiveNote}</p>
-        </div>
-      ) : null}
       {popover === 'sessions' ? (
         <div className="popover" role="dialog" aria-label={t.sessions} style={{ top: 64 + 48 }}>
           <h3>{t.sessions}</h3>
@@ -241,8 +218,8 @@ export function App() {
         </div>
       ) : null}
 
-      {view === 'config' ? <ConfigView lang={lang} cwds={cwds} live={liveOk && !stopped} /> : null}
-      <main className={`main${maxPane ? ` max-${maxPane}` : ''}${view === 'config' ? ' hidden' : ''}`}>
+      {view === 'settings' ? <SettingsView lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} motion={motionPref} setMotion={setMotionPref} cwds={cwds} live={liveOk && !stopped} /> : null}
+      <main className={`main${maxPane ? ` max-${maxPane}` : ''}${view === 'settings' ? ' hidden' : ''}`}>
         <div className="stage" onKeyDown={onStageKey}>
           <MaxToggle on={maxPane === 'stage'} onToggle={() => toggleMax('stage')} lang={lang} className="stage-max" />
           <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onSelect} motion={motion} lang={lang} demo={isDemo} farewellAt={farewell?.at} ended={sessionOver} /></div>
