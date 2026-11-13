@@ -17,6 +17,11 @@ export const IconSend =(p: P) => (<S {...p}><path d="M21 3 10 14" /><path d="m21
 export const IconRestart = (p: P) => (<S {...p}><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></S>);
 export const IconPause = (p: P) => (<S {...p}><path d="M9 5v14M15 5v14" /></S>);
 export const IconPlay = (p: P) => (<S {...p}><path d="M7 5v14l11-7L7 5Z" /></S>);
+export const IconMore = (p: P) => (<S {...p}><path d="M5.5 12h.01M12 12h.01M18.5 12h.01" strokeWidth={3} /></S>);
+export const IconFolder = (p: P) => (<S {...p}><path d="M3 7.5V18a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 18V9a1.5 1.5 0 0 0-1.5-1.5H12L10 5H4.5A1.5 1.5 0 0 0 3 6.5v1Z" /></S>);
+export const IconTextSize = (p: P) => (<S {...p}><path d="M3 18 8 6l5 12M4.7 14h6.6" /><path d="M14.5 18l3-7 3 7M15.6 15.5h3.8" /></S>);
+export const IconClose = (p: P) => (<S {...p}><path d="M6 6l12 12M18 6 6 18" /></S>);
+export const IconChevronDown = (p: P) => (<S {...p}><path d="m6 9.5 6 6 6-6" /></S>);
 export const IconUser = (p: P) => (<S {...p}><circle cx="12" cy="8.5" r="3.5" /><path d="M5 20c1.2-3.6 4-5 7-5s5.8 1.4 7 5" /></S>);
 export const IconSmile = (p: P) => (<S {...p}><circle cx="12" cy="12" r="8.5" /><path d="M9 10h.01M15 10h.01" /><path d="M8.5 14c1 1.4 2.2 2 3.5 2s2.5-.6 3.5-2" /></S>);
 

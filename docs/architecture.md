@@ -61,12 +61,13 @@ Claude Code session (terminal / IDE / Desktop app)
 - `stop`: calls `/api/shutdown`; kills the process if it does not exit and removes the runtime file. `check`: Node >= 18 and a node-pty prebuild for this OS/CPU.
 
 ### office-ui
-- Top bar (live / reconnecting / no access key / offline), rail (Office / Sessions / Settings), Stage (1600×480 SVG office), ChatPanel (Terminal / History), ConsolePanel (state, estimated outcome, last 80 evidence lines).
+- Top bar (live / reconnecting / no access key / offline), rail (Office / Sessions / Settings), Stage (1600×480 SVG office), ChatPanel (Terminal / History), ConsolePanel (nobody selected: counts, agent list and the latest 80 evidence lines of everyone; one agent: task, state, estimated outcome and its last 80 lines).
+- The office picture carries no standing text panels. A status chip over its top right corner (counts; a permission wait is always on it) opens the task list. The label above a figure is a short stage name with a pulsing dot while busy, never a bar (no progress is known); the full wording is the tooltip and the Console. Labels that need the user (permission wait, interrupted, failed, retrying) keep a colored outline.
 - Which session is shown: pinned > the built-in terminal's session > the most recently active one.
-- The terminal bar shows the folder and the permission mode reported by that session's hooks.
+- The terminal bar shows the folder (last two parts; full path in the tooltip), the permission mode reported by that session's hooks, and start / stop. Its "more actions" menu has two items, each opening a native `<dialog>` (modal, Escape closes, focus returns to the menu button): the working folder (how to start: new / continue / pick a past session; where: current folder, another session's folder or a typed one) and the terminal text size. A start from the dialog goes through the same confirmation as before when Claude Code is running; declining keeps both the session and the dialog.
 - `live/token.ts`: reads `#t=`, removes it from the URL at once, keeps it in sessionStorage. `useLiveFeed`: reads SSE with fetch (EventSource cannot send the key header). 401 → "no access key"; reconnects every 2 s.
 - `useDemoPlayer`: replays `examples/demo-events/office-demo.json` through the same normalizeHook + reduceOffice as live.
-- English/Japanese, theme (system/light/dark), motion (system/reduce/full), text size (80–160%, also the built-in terminal; not the office picture) and the sizes of the three areas (draggable borders), saved in localStorage. Keyboard operable, aria labels.
+- English/Japanese, theme (system/light/dark), motion (system/reduce/full), text size (80–160%; not the office picture), the built-in terminal's own text size (80–200%; also in the terminal's "more actions" menu and with Ctrl+wheel over the terminal) and the sizes of the three areas (draggable borders), saved in localStorage. Keyboard operable, aria labels.
 
 ### plugin
 - `hooks.json`: 11 events call `node ${CLAUDE_PLUGIN_ROOT}/scripts/forward.mjs` (async, timeout 5).

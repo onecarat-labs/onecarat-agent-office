@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { MANAGER_ID, type SessionState } from '@onecarat/domain';
+import type { SessionState } from '@onecarat/domain';
 import { useLiveFeed } from './live/useLiveFeed.ts';
 import { useTerminal } from './live/useTerminal.ts';
 import { authHeaders } from './live/token.ts';
 import { FAREWELL_MS, Stage, useStageKeyboard } from './office/Stage.tsx';
-import { ConsolePanel, MaxToggle, SPLIT_MAX, SPLIT_MIN, Splitter, TerminalPanel } from './panels.tsx';
+import { StageStatus } from './office/TaskBoard.tsx';
+import { ConsolePanel, MaxToggle, OVERVIEW, SPLIT_MAX, SPLIT_MIN, Splitter, TerminalPanel } from './panels.tsx';
 import { useDemoPlayer } from './demo/useDemoPlayer.ts';
 import { IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
-import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN, SettingsView, type Motion, type Theme } from './config/SettingsView.tsx';
+import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN, TERM_SCALE_MAX, TERM_SCALE_MIN, SettingsView, type Motion, type Theme } from './config/SettingsView.tsx';
 import { detectLang, dict, type Lang } from './i18n.ts';
 
 type Pane = 'stage' | 'terminal' | 'console';
@@ -70,6 +71,9 @@ export function App() {
   const [stageSplit, setStageSplit] = useState(() => loadNum('office.split.stage', STAGE_SPLIT_DEFAULT, SPLIT_MIN, SPLIT_MAX));
   const [termSplit, setTermSplit] = useState(() => loadNum('office.split.terminal', TERM_SPLIT_DEFAULT, SPLIT_MIN, SPLIT_MAX));
   const [fontScale, setFontScale] = useState(() => loadNum('office.fontScale', FONT_SCALE_DEFAULT, FONT_SCALE_MIN, FONT_SCALE_MAX));
+  // The built-in terminal has its own text size. Until it is set, it starts from the general one (which also
+  // sized the terminal up to 0.2.10), so nobody's terminal changes size on update.
+  const [termScale, setTermScale] = useState(() => loadNum('office.termScale', fontScale, TERM_SCALE_MIN, TERM_SCALE_MAX));
   const layoutCustom = stageSplit !== STAGE_SPLIT_DEFAULT || termSplit !== TERM_SPLIT_DEFAULT;
   const resetLayout = useCallback(() => { setStageSplit(STAGE_SPLIT_DEFAULT); setTermSplit(TERM_SPLIT_DEFAULT); }, []);
   const [popover, setPopover] = useState<'none' | 'sessions'>('none');
@@ -148,10 +152,13 @@ export function App() {
     sayGoodbye(sessionIdRef.current);
   }, [endedAt, endReason, sayGoodbye]);
 
-  const [selectedId, setSelectedId] = useState<string>(MANAGER_ID);
+  // Nobody selected = the console shows the whole session. A click on a figure selects it; a second click on
+  // the same figure goes back to the overview.
+  const [selectedId, setSelectedId] = useState<string>(OVERVIEW);
   const onSelect = useCallback((id: string) => setSelectedId(id), []);
+  const onFigure = useCallback((id: string) => setSelectedId((cur) => (cur === id ? OVERVIEW : id)), []);
   useEffect(() => {
-    if (session && !session.agents[selectedId]) setSelectedId(MANAGER_ID);
+    if (selectedId !== OVERVIEW && session && !session.agents[selectedId]) setSelectedId(OVERVIEW);
   }, [session, selectedId]);
   const onStageKey = useStageKeyboard(session, selectedId, onSelect);
 
@@ -168,6 +175,7 @@ export function App() {
     document.documentElement.style.setProperty('--fs', String(fontScale));
     save('office.fontScale', String(fontScale));
   }, [fontScale]);
+  useEffect(() => save('office.termScale', String(termScale)), [termScale]);
   useEffect(() => {
     save('office.lang', lang);
     document.documentElement.lang = lang;
@@ -241,11 +249,12 @@ export function App() {
         </div>
       ) : null}
 
-      {view === 'settings' ? <SettingsView lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} motion={motionPref} setMotion={setMotionPref} fontScale={fontScale} setFontScale={setFontScale} layout={{ stage: stageSplit, terminal: termSplit, custom: layoutCustom }} resetLayout={resetLayout} cwds={cwds} live={liveOk && !stopped} /> : null}
+      {view === 'settings' ? <SettingsView lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} motion={motionPref} setMotion={setMotionPref} fontScale={fontScale} setFontScale={setFontScale} termScale={termScale} setTermScale={setTermScale} layout={{ stage: stageSplit, terminal: termSplit, custom: layoutCustom }} resetLayout={resetLayout} cwds={cwds} live={liveOk && !stopped} /> : null}
       <main className={`main${maxPane ? ` max-${maxPane}` : ''}${view === 'settings' ? ' hidden' : ''}`} style={{ '--stage-fr': `${stageSplit * 100}fr`, '--bottom-fr': `${(1 - stageSplit) * 100}fr`, '--term-fr': `${termSplit * 100}fr`, '--console-fr': `${(1 - termSplit) * 100}fr` } as React.CSSProperties}>
         <div className="stage" onKeyDown={onStageKey}>
           <MaxToggle on={maxPane === 'stage'} onToggle={() => toggleMax('stage')} lang={lang} className="stage-max" />
-          <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onSelect} motion={motion} lang={lang} demo={isDemo} farewellAt={farewell?.at} ended={sessionOver} /></div>
+          <StageStatus session={session} lang={lang} selectedId={selectedId} onPick={onSelect} />
+          <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onFigure} motion={motion} lang={lang} demo={isDemo} farewellAt={farewell?.at} ended={sessionOver} /></div>
           {isDemo ? <div className="demo-ribbon">{t.demoRibbon}</div> : null}
           {!isDemo && live.status === 'locked' ? <div className="live-waiting">{t.locked}</div> : null}
           {!isDemo && live.status !== 'locked' && !stopped && !session ? <div className="live-waiting">{t.liveWaiting}</div> : null}
@@ -257,7 +266,7 @@ export function App() {
         </div>
         <Splitter orientation="horizontal" value={stageSplit} onChange={setStageSplit} onReset={() => setStageSplit(STAGE_SPLIT_DEFAULT)} label={t.splitRows} />
         <div className="bottom">
-          <TerminalPanel fontScale={fontScale} session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => { if (termHadSession) sayGoodbye(sessionId); }} officeStopped={stopped} />
+          <TerminalPanel fontScale={termScale} setFontScale={setTermScale} session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => { if (termHadSession) sayGoodbye(sessionId); }} officeStopped={stopped} />
           <Splitter orientation="vertical" value={termSplit} onChange={setTermSplit} onReset={() => setTermSplit(TERM_SPLIT_DEFAULT)} label={t.splitCols} />
           <ConsolePanel session={session} selectedId={selectedId} onSelect={onSelect} lang={lang} max={maxPane === 'console'} onMax={() => toggleMax('console')} />
         </div>
