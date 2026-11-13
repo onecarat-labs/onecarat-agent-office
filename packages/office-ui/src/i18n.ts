@@ -25,7 +25,21 @@ const en = {
   outcomeNote: 'Claude Code does not report success/failure; this is an estimate from events.',
   noEvents: 'No events yet.',
   agent: 'Agent',
-  board: 'Agent Board',
+  board: 'Tasks',
+  boardOpen: 'Show the task list',
+  waitingCount: '{n} waiting for permission',
+  overview: 'Overview',
+  overviewAgents: 'Agents',
+  overviewNow: 'Activity',
+  termMore: 'More actions',
+  termChangeFolder: 'Change working folder',
+  termFolderNow: 'Current folder',
+  termFolderCurrent: 'current',
+  termFolderChoose: 'Start in',
+  termFolderType: 'Or type a folder',
+  termFolderRunning: 'Claude Code is running. Starting here asks before it stops the running one.',
+  termSizeAbout: 'Size of the text in this terminal. Ctrl + mouse wheel over the terminal changes it too.',
+  close: 'Close',
   boardEmpty: 'No subagents yet',
   active: 'active',
   completed: 'completed',
@@ -92,7 +106,11 @@ const en = {
   setMotionAbout: 'How much the figures move. "Reduced" stops looping animations; "System" follows your OS setting.',
   setLanguageAbout: "Language of Office's screen. It does not change the language Claude Code answers in.",
   textSize: 'Text size',
-  setTextSizeAbout: 'Size of the text in Office, including the built-in terminal. The office picture is not affected: it grows and shrinks with its area.',
+  setTextSizeAbout: 'Size of the text in Office. The built-in terminal has its own setting (Terminal text size). The office picture is not affected: it grows and shrinks with its area.',
+  termTextSize: 'Terminal text size',
+  setTermTextSizeAbout: 'Size of the text in the built-in terminal only. The same setting is in the "More actions" menu (…) above the terminal, and Ctrl + mouse wheel over the terminal changes it too.',
+  termSmaller: 'Smaller terminal text',
+  termLarger: 'Larger terminal text',
   smaller: 'Smaller',
   larger: 'Larger',
   resetDefault: 'Reset to default',
@@ -156,7 +174,21 @@ const ja: Dict = {
   outcomeNote: 'Claude Code は成功／失敗を通知しないため、イベントからの推定です。',
   noEvents: 'まだイベントはありません。',
   agent: 'エージェント',
-  board: 'エージェントボード',
+  board: 'タスク一覧',
+  boardOpen: 'タスク一覧を表示',
+  waitingCount: '許可待ち {n}',
+  overview: '全体',
+  overviewAgents: 'エージェント',
+  overviewNow: '稼働状況',
+  termMore: 'その他の操作',
+  termChangeFolder: '作業フォルダを変更',
+  termFolderNow: '現在のフォルダ',
+  termFolderCurrent: '現在',
+  termFolderChoose: '開始するフォルダ',
+  termFolderType: 'フォルダを入力して指定',
+  termFolderRunning: 'Claude Code が実行中です。ここから開始すると、実行中のものを終了してよいか確認します。',
+  termSizeAbout: 'このターミナルの文字の大きさです。ターミナルの上で Ctrl + マウスホイールを回しても変えられます。',
+  close: '閉じる',
   boardEmpty: 'サブエージェントはまだいません',
   active: '稼働中',
   completed: '完了',
@@ -223,7 +255,11 @@ const ja: Dict = {
   setMotionAbout: '棒人間の動きの量です。「控えめ」は繰り返しのアニメーションを止め、「システムに合わせる」は OS の設定に従います。',
   setLanguageAbout: 'Office の画面の言語です。Claude Code が応答する言語は変わりません。',
   textSize: '文字の大きさ',
-  setTextSizeAbout: 'Office の文字の大きさです。内蔵ターミナルにも効きます。オフィスの絵は対象外で、エリアの大きさに合わせて拡大・縮小します。',
+  setTextSizeAbout: 'Office の文字の大きさです。内蔵ターミナルの文字は「ターミナルの文字の大きさ」で別に決めます。オフィスの絵は対象外で、エリアの大きさに合わせて拡大・縮小します。',
+  termTextSize: 'ターミナルの文字の大きさ',
+  setTermTextSizeAbout: '内蔵ターミナルの文字だけの大きさです。ターミナルの上の「その他の操作」メニューにも同じ設定があり、ターミナルの上で Ctrl + マウスホイールを回しても変えられます。',
+  termSmaller: 'ターミナルの文字を小さく',
+  termLarger: 'ターミナルの文字を大きく',
   smaller: '小さく',
   larger: '大きく',
   resetDefault: '既定に戻す',
@@ -299,9 +335,18 @@ export const bubbleText: Record<Lang, Record<BubbleKey, string>> = {
   },
 };
 
+/**
+ * Short labels shown above the figures. The full text (bubbleText) is in the tooltip and in the console.
+ * Anything that needs the user (permission wait) keeps its full wording.
+ */
+export const bubbleShort: Record<Lang, Record<BubbleKey, string>> = {
+  en: { ...bubbleText.en, thinking: 'Thinking', reading: 'Reading', editing: 'Editing', executing: 'Running', testing: 'Testing', retrying: 'Retrying' },
+  ja: { ...bubbleText.ja, thinking: '考え中', reading: '調査中', executing: '実行中', researching: '調べ中', retrying: 'やり直し中' },
+};
+
 export const statusText: Record<Lang, Record<AgentStatus, string>> = {
   en: { created: 'Starting', idle: 'Idle', delegating: 'Delegating', working: 'In progress', waiting_permission: 'Waiting for permission', blocked: 'Interrupted', completed: 'Completed', failed: 'Failed', unknown: 'Unknown' },
-  ja: { created: '起動中', idle: '待機中', delegating: '指示中', working: '作業中', waiting_permission: '許可待ち', blocked: '中断', completed: '完了', failed: '失敗', unknown: '不明' },
+  ja: { created: '起動中', idle: '待機', delegating: '指示中', working: '作業中', waiting_permission: '許可待ち', blocked: '中断', completed: '完了', failed: '失敗', unknown: '不明' },
 };
 
 export const outcomeText: Record<Lang, Record<Outcome, string>> = {

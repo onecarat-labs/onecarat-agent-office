@@ -7,7 +7,7 @@ import type { TerminalLink } from './live/useTerminal.ts';
 /** xterm.js view of the embedded `claude`. Keystrokes go to the terminal only when the user types them. */
 const BASE_FONT = 13;
 
-export function TerminalView({ term, label, fontScale = 1 }: { term: TerminalLink; label: string; fontScale?: number }) {
+export function TerminalView({ term, label, fontScale = 1, onZoom }: { term: TerminalLink; label: string; fontScale?: number; onZoom?: (dir: -1 | 1) => void }) {
   const host = useRef<HTMLDivElement>(null);
   const x = useRef<XTerm | undefined>(undefined);
   const fitRef = useRef<FitAddon | undefined>(undefined);
@@ -75,6 +75,27 @@ export function TerminalView({ term, label, fontScale = 1 }: { term: TerminalLin
       /* not laid out (pane hidden): the ResizeObserver refits when it shows */
     }
   }, [fontSize, send]);
+
+  // Ctrl + wheel over the terminal: one step larger / smaller (instead of the browser zooming the whole page).
+  // Only over the terminal, only with Ctrl: plain wheel scrolling and the page zoom elsewhere are untouched.
+  const onZoomRef = useRef(onZoom);
+  onZoomRef.current = onZoom;
+  useEffect(() => {
+    const el = host.current!;
+    let lastZoom = 0;
+    const onWheel = (ev: WheelEvent) => {
+      if (!ev.ctrlKey || !onZoomRef.current || ev.deltaY === 0) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      // A touchpad pinch arrives as a burst of Ctrl+wheel events: one step per burst, not one per event.
+      const now = Date.now();
+      if (now - lastZoom < 150) return;
+      lastZoom = now;
+      onZoomRef.current(ev.deltaY < 0 ? 1 : -1);
+    };
+    el.addEventListener('wheel', onWheel, { capture: true, passive: false });
+    return () => el.removeEventListener('wheel', onWheel, true);
+  }, []);
 
   // Tell the pty our size again whenever a link (re)opens or claude (re)starts.
   useEffect(() => {

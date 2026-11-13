@@ -40,10 +40,11 @@ Installing the plugin without Node.js does not break Claude Code: the hooks are 
 
 ## Use
 
-- **Chat → Terminal**: press "Start Claude Code here". The real interactive `claude` starts in the folder shown (by default, the folder of the session that started Office; "Other folders" switches). "Continue last session" reopens the most recent conversation of that folder (`claude --continue`), and "Pick a past session" shows Claude Code's own list of past conversations in the terminal (`claude --resume`). Type requests and answer permission prompts there, as in any terminal. The office above follows that session. While Claude Code uses the mouse itself, a right click goes to Claude Code only; hold Shift to select text or to open the browser's copy / paste menu.
+- **Chat → Terminal**: press "Start Claude Code here". The real interactive `claude` starts in the folder shown (by default, the folder of the session that started Office). The "…" menu next to that button has two items, each opening its own dialog: "Change working folder" and "Terminal text size". In the folder dialog you choose how to start (new session, continue, pick a past session) and where (the current folder, a folder of another session, or one you type). "Continue last session" reopens the most recent conversation of that folder (`claude --continue`), and "Pick a past session" shows Claude Code's own list of past conversations in the terminal (`claude --resume`). Type requests and answer permission prompts there, as in any terminal. The office above follows that session. While Claude Code uses the mouse itself, a right click goes to Claude Code only; hold Shift to select text or to open the browser's copy / paste menu.
 - Or just use Claude Code as usual: terminal, IDE extension or Desktop app all show up the same way.
 - The most active session is shown; switch with the Sessions button on the left.
-- Click a figure to see the real events behind its state in the Console panel.
+- The Console panel shows the whole session (who is doing what, latest events). Click a figure to see that agent's task, state and the real events behind it; click it again to go back to the overview. The label above a figure is short ("Reading", "Running"); hover for the full wording.
+- The counter at the top right of the office ("2 active / 1 completed") opens the task list. A permission wait is always shown on it.
 - Stop with "Stop Onecarat Agent Office" or `/onecarat-agent-office:office stop`. Closing the tab does not stop it. When Claude Code in the built-in terminal ends (`/exit`, the Stop button), Office stops by itself a few seconds later; the page keeps the goodbye scene. Sessions in other terminals do not stop Office.
 
 ### What the screen promises
@@ -67,7 +68,7 @@ bridge (127.0.0.1:47821, memory only) ── events ──▶ Office UI in your 
 
 - **Office never calls a model.** No Anthropic API, Agent SDK or `claude -p`, so **it adds no extra cost.** Like any plugin skill, its short skill description (a few dozen tokens) is part of each session's context.
 - It **never reads credentials** (`~/.claude/.credentials.json` etc.).
-- **Settings** (gear icon on the left) has three panes: menu, list and detail. "Office" holds Office's own display settings (theme, motion, language, text size, area sizes). "Claude Code" lists every place Claude Code reads settings from, grouped by topic, with what each is for, and shows the current content **read-only** when you open it. Secret-looking values and everything under `env`/`headers` are hidden; from `~/.claude.json` only the MCP servers and the current project's permissions are read. Office never edits these files: ask Claude Code to change them.
+- **Settings** (gear icon on the left) has three panes: menu, list and detail. "Office" holds Office's own display settings (theme, motion, language, text size, terminal text size, area sizes). "Claude Code" lists every place Claude Code reads settings from, grouped by topic, with what each is for, and shows the current content **read-only** when you open it. Secret-looking values and everything under `env`/`headers` are hidden; from `~/.claude.json` only the MCP servers and the current project's permissions are read. Office never edits these files: ask Claude Code to change them.
 
 See [docs/architecture.md](docs/architecture.md) and [docs/security.md](docs/security.md).
 

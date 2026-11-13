@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MANAGER_ID, expressionOf, summarize, type AgentState, type SessionState, type Expression } from '@onecarat/domain';
+import { MANAGER_ID, expressionOf, type AgentState, type SessionState, type Expression } from '@onecarat/domain';
 import { Figure, type FigurePose } from './Figure.tsx';
-import { bubbleText, dict, displayName, statusText, type Lang } from '../i18n.ts';
+import { bubbleShort, bubbleText, dict, displayName, statusText, type Lang } from '../i18n.ts';
 
 const W = 1600;
 const H = 480;
@@ -146,7 +146,6 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
 
   const highfiving = onStage.some((id) => choreo[id]?.phase === 'highfive');
   const bowing = onStage.some((id) => choreo[id]?.phase === 'bow');
-  const summary = session ? summarize(session) : { active: 0, completed: 0, failed: 0 };
   const fw = farewellStep(farewellAt, Date.now());
 
   // Position of each subagent figure for its phase.
@@ -279,9 +278,6 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
         <path className="plant-pot" d="M8 30 h44 l-6 52 h-32Z" />
       </g>
 
-      <AgentBoard session={session} lang={lang} />
-      <StatusPill summary={summary} lang={lang} />
-
       {/* manager area */}
       <ellipse className="rug" cx={MGR_X + 20} cy={438} rx={230} ry={40} />
       <DeskBack x={MGR_X} w={250} manager />
@@ -366,83 +362,37 @@ function FigureButton(props: {
         }
       }}
     >
+      {/* hover: the full wording, what it is working on and its task (the label above the head is short) */}
+      <title>{[label + (bubble && agent.activityDetail ? ` · ${agent.activityDetail}` : ''), agent.role === 'subagent' ? agent.task : undefined].filter(Boolean).join('\n')}</title>
       <rect className="hit" x={-50} y={-190} width={110} height={196} />
       <rect className="focus-ring" x={-46} y={-188} width={100} height={194} rx={12} />
       <Figure pose={props.pose} face={props.face} sweat={props.sweat} walking={props.walking} motion={props.motion} facing={props.facing} manager={props.manager} />
-      {bubble ? <Bubble text={bubbleText[lang][bubble.key]} tone={bubble.tone} busy={busy} /> : null}
+      {bubble ? <Bubble text={bubbleShort[lang][bubble.key]} tone={bubble.tone} busy={busy} attention={ATTENTION.has(bubble.key)} /> : null}
     </g>
   );
 }
 
-function Bubble({ text, tone, busy }: { text: string; tone: string; busy: boolean }) {
-  const w = Math.max(96, Math.round(text.length * (/[^\x00-\x7f]/.test(text) ? 17.5 : 9.6)) + 36);
-  const h = busy ? 52 : 38;
-  const x = -w / 2 + 6;
-  const y = -206 - h;
+/** Bubbles that ask for the user's attention keep a strong outline; the rest are a quiet label. */
+const ATTENTION: ReadonlySet<string> = new Set(['waiting_permission', 'blocked', 'failed', 'retrying']);
+
+/**
+ * Small status label above a figure. No progress bar: Claude Code reports no progress, so nothing here may look
+ * like one. "busy" is a pulsing dot only.
+ */
+function Bubble({ text, tone, busy, attention }: { text: string; tone: string; busy: boolean; attention: boolean }) {
+  const tw = [...text].reduce((n, c) => n + (/[^\x00-\x7f]/.test(c) ? 15.5 : 8.4), 0);
+  const dot = busy ? 15 : 0;
+  const w = Math.max(54, Math.round(tw) + 24 + dot);
+  const h = 30;
+  const x = -w / 2 + 2;
+  const y = -194 - h;
   return (
-    <g className={`bubble tone-${tone}`} aria-hidden="true">
-      <rect x={x} y={y} width={w} height={h} rx={12} />
-      <path className="tail" d={`M-4 ${y + h - 1} l10 13 l8 -13`} strokeWidth={2} />
-      <rect x={x + 2} y={y + h - 4} width={w - 4} height={3} style={{ fill: 'var(--panel)', stroke: 'none' }} />
-      <text x={x + w / 2} y={y + 25} textAnchor="middle">{text}</text>
-      {busy ? (
-        <g>
-          <clipPath id={`clip-${text.length}-${w}`}><rect x={x + 16} y={y + 34} width={w - 32} height={5} rx={2.5} /></clipPath>
-          <rect className="busybar-track" x={x + 16} y={y + 34} width={w - 32} height={5} rx={2.5} />
-          <g clipPath={`url(#clip-${text.length}-${w})`}>
-            <rect className="busybar-fill indeterminate" x={x + 16} y={y + 34} width={(w - 32) * 0.4} height={5} rx={2.5} />
-          </g>
-        </g>
-      ) : null}
+    <g className={`bubble tone-${tone}${attention ? ' attention' : ''}`} aria-hidden="true">
+      <rect x={x} y={y} width={w} height={h} rx={h / 2} />
+      {busy ? <circle className="pulse" cx={x + 16} cy={y + h / 2} r={4} /> : null}
+      <text x={x + dot + (w - dot) / 2} y={y + 20.5} textAnchor="middle">{text}</text>
     </g>
   );
-}
-
-function AgentBoard({ session, lang }: { session?: SessionState; lang: Lang }) {
-  const t = dict[lang];
-  const rows = (session?.order ?? []).map((id) => session!.agents[id]!).slice(0, 4);
-  const more = (session?.order.length ?? 0) - rows.length;
-  const h = 58 + Math.max(1, rows.length) * 28 + (more > 0 ? 20 : 0);
-  return (
-    <g transform="translate(430, 12)">
-      <rect className="svg-panel" width={270} height={h} rx={10} />
-      <text x={20} y={34} className="board-title">{t.board}</text>
-      {rows.length === 0 ? <text x={20} y={68} className="board-empty">{t.boardEmpty}</text> : null}
-      {rows.map((a, i) => (
-        <g key={a.id} transform={`translate(20, ${54 + i * 28})`}>
-          <StatusGlyph a={a} />
-          <text x={22} y={17} className="board-row">{a.task ? truncate(a.task, 23) : displayName(a, lang)}</text>
-        </g>
-      ))}
-      {more > 0 ? <text x={20} y={h - 12} className="board-empty">+{more}</text> : null}
-    </g>
-  );
-}
-
-function StatusGlyph({ a }: { a: AgentState }) {
-  if (a.status === 'completed' && a.outcome === 'success_estimated') return <path d="M2 12 l5 5 l9 -11" className="facestroke" style={{ stroke: 'var(--ok)' }} />;
-  if (a.status === 'completed') return <circle cx={8} cy={11} r={6} style={{ fill: 'none', stroke: 'var(--muted)', strokeWidth: 2.5 }} />;
-  if (a.status === 'failed') return <path d="M3 5 l11 11 M14 5 l-11 11" className="facestroke" style={{ stroke: 'var(--danger)' }} />;
-  if (a.status === 'waiting_permission') return (<g><circle cx={8} cy={11} r={7} style={{ fill: 'none', stroke: 'var(--warn)', strokeWidth: 2.5 }} /><path d="M8 7 v4 l3 2" className="facestroke" style={{ stroke: 'var(--warn)', strokeWidth: 2 }} /></g>);
-  return <circle cx={8} cy={11} r={7} className="spinner" style={{ fill: 'none', stroke: 'var(--accent)', strokeWidth: 2.5, strokeDasharray: '3 3.2' }} />;
-}
-
-function StatusPill({ summary, lang }: { summary: { active: number; completed: number; failed: number }; lang: Lang }) {
-  const t = dict[lang];
-  const text = `${summary.active} ${t.active} / ${summary.completed} ${t.completed}${summary.failed ? ` / ${summary.failed} ${t.failed}` : ''}`;
-  const w = Math.round(text.length * (lang === 'ja' ? 13 : 9.2)) + 70;
-  return (
-    <g transform={`translate(${W - 24 - w}, 22)`}>
-      <rect className="svg-panel" width={w} height={46} rx={10} />
-      <circle cx={26} cy={23} r={11} className="svg-ok" />
-      <path d="M20.5 23 l4 4 l7 -8" style={{ stroke: 'var(--panel)', strokeWidth: 2.6, fill: 'none', strokeLinecap: 'round' }} />
-      <text x={46} y={29} className="status-text">{text}</text>
-    </g>
-  );
-}
-
-function truncate(s: string, n: number) {
-  return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
 export function useStageKeyboard(session: SessionState | undefined, selectedId: string, onSelect: (id: string) => void) {
@@ -450,8 +400,9 @@ export function useStageKeyboard(session: SessionState | undefined, selectedId: 
     const ids = [MANAGER_ID, ...(session?.order ?? [])];
     return (e: React.KeyboardEvent) => {
       if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-      const i = Math.max(0, ids.indexOf(selectedId));
-      const n = e.key === 'ArrowRight' ? (i + 1) % ids.length : (i - 1 + ids.length) % ids.length;
+      // Nobody selected (overview): the first key press picks the manager.
+      const i = ids.indexOf(selectedId);
+      const n = i < 0 ? 0 : e.key === 'ArrowRight' ? (i + 1) % ids.length : (i - 1 + ids.length) % ids.length;
       onSelect(ids[n]!);
       e.preventDefault();
     };

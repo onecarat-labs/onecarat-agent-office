@@ -14,6 +14,12 @@ export const FONT_SCALE_DEFAULT = 1;
 export const FONT_SCALE_MIN = 0.8;
 export const FONT_SCALE_MAX = 1.6;
 const FONT_SCALE_STEP = 0.1;
+/** Text size of the built-in terminal, set on its own (a terminal is often wanted larger than the labels around it). */
+export const TERM_SCALE_DEFAULT = 1;
+export const TERM_SCALE_MIN = 0.8;
+export const TERM_SCALE_MAX = 2;
+/** One step of 10%, kept on round values (0.1 steps drift in floating point). */
+export const stepScale = (v: number, dir: -1 | 0 | 1, min: number, max: number) => Math.min(max, Math.max(min, Math.round((v + dir * FONT_SCALE_STEP) * 10) / 10));
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
 /** Mirrors packages/event-bridge/src/config-scan.ts (the UI does not import Node code). */
@@ -46,14 +52,15 @@ function statusOf(e: ConfigEntry | undefined): Status {
 
 const LAYERS: Layer[] = ['managed', 'user', 'project'];
 const DISPLAY = 'display';
-type DisplayId = 'theme' | 'motion' | 'language' | 'textSize' | 'layout';
-const DISPLAY_IDS: DisplayId[] = ['theme', 'motion', 'language', 'textSize', 'layout'];
+type DisplayId = 'theme' | 'motion' | 'language' | 'textSize' | 'termTextSize' | 'layout';
+const DISPLAY_IDS: DisplayId[] = ['theme', 'motion', 'language', 'textSize', 'termTextSize', 'layout'];
 
 export interface SettingsProps {
   lang: Lang; setLang: (v: Lang) => void;
   theme: Theme; setTheme: (v: Theme) => void;
   motion: Motion; setMotion: (v: Motion) => void;
   fontScale: number; setFontScale: (v: number) => void;
+  termScale: number; setTermScale: (v: number) => void;
   /** Shares set by dragging the borders on the office screen (stage: of the height, terminal: of the width). */
   layout: { stage: number; terminal: number; custom: boolean };
   resetLayout: () => void;
@@ -96,11 +103,9 @@ export function SettingsView(p: SettingsProps) {
   const summary = (ids: string[]) => t.cfgSummary.replace('{n}', String(inUse(ids))).replace('{total}', String(ids.length));
   const pick = (id: string) => setPicked((cur) => ({ ...cur, [topicId]: id }));
 
-  const displayLabel: Record<DisplayId, string> = { theme: t.theme, motion: t.motion, language: t.language, textSize: t.textSize, layout: t.layout };
+  const displayLabel: Record<DisplayId, string> = { theme: t.theme, motion: t.motion, language: t.language, textSize: t.textSize, termTextSize: t.termTextSize, layout: t.layout };
   const modeLabel = { system: t.system, light: t.light, dark: t.dark, reduce: t.reduce, full: t.full };
-  const displayValue: Record<DisplayId, string> = { theme: modeLabel[p.theme], motion: modeLabel[p.motion], language: lang === 'ja' ? '日本語' : 'English', textSize: pct(p.fontScale), layout: p.layout.custom ? t.layoutCustom : t.layoutDefault };
-  // Steps of 10%, kept on round values (0.1 steps drift in floating point).
-  const setScale = (v: number) => p.setFontScale(Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, Math.round(v * 10) / 10)));
+  const displayValue: Record<DisplayId, string> = { theme: modeLabel[p.theme], motion: modeLabel[p.motion], language: lang === 'ja' ? '日本語' : 'English', textSize: pct(p.fontScale), termTextSize: pct(p.termScale), layout: p.layout.custom ? t.layoutCustom : t.layoutDefault };
 
   let list: React.ReactNode;
   let detail: React.ReactNode;
@@ -161,17 +166,9 @@ export function SettingsView(p: SettingsProps) {
           ) : selected === 'motion' ? (
             <Choice name="motion" label={t.motion} about={t.setMotionAbout} value={p.motion} onChange={p.setMotion} options={[['system', t.system], ['reduce', t.reduce], ['full', t.full]]} note={t.highFiveNote} />
           ) : selected === 'textSize' ? (
-            <>
-              <p className="set-about">{t.setTextSizeAbout}</p>
-              <div className="set-size">
-                <button className="btn" aria-label={t.smaller} title={t.smaller} disabled={p.fontScale <= FONT_SCALE_MIN} onClick={() => setScale(p.fontScale - FONT_SCALE_STEP)}>A−</button>
-                <input type="range" aria-label={t.textSize} min={FONT_SCALE_MIN * 100} max={FONT_SCALE_MAX * 100} step={FONT_SCALE_STEP * 100} value={Math.round(p.fontScale * 100)} onChange={(e) => setScale(Number(e.target.value) / 100)} />
-                <button className="btn" aria-label={t.larger} title={t.larger} disabled={p.fontScale >= FONT_SCALE_MAX} onClick={() => setScale(p.fontScale + FONT_SCALE_STEP)}>A+</button>
-                <output aria-live="polite">{pct(p.fontScale)}</output>
-              </div>
-              <button className="btn" disabled={p.fontScale === FONT_SCALE_DEFAULT} onClick={() => p.setFontScale(FONT_SCALE_DEFAULT)}>{t.resetDefault}</button>
-              <p className="cfg-small set-remembered">{t.setRemembered}</p>
-            </>
+            <SizeControl label={t.textSize} about={t.setTextSizeAbout} value={p.fontScale} onChange={p.setFontScale} min={FONT_SCALE_MIN} max={FONT_SCALE_MAX} def={FONT_SCALE_DEFAULT} lang={lang} />
+          ) : selected === 'termTextSize' ? (
+            <SizeControl label={t.termTextSize} about={t.setTermTextSizeAbout} value={p.termScale} onChange={p.setTermScale} min={TERM_SCALE_MIN} max={TERM_SCALE_MAX} def={TERM_SCALE_DEFAULT} lang={lang} />
           ) : selected === 'layout' ? (
             <>
               <p className="set-about">{t.setLayoutAbout}</p>
@@ -222,6 +219,23 @@ export function SettingsView(p: SettingsProps) {
         {detail}
       </div>
     </section>
+  );
+}
+
+export function SizeControl({ label, about, value, onChange, min, max, def, lang }: { label: string; about: string; value: number; onChange: (v: number) => void; min: number; max: number; def: number; lang: Lang }) {
+  const t = dict[lang];
+  return (
+    <>
+      <p className="set-about">{about}</p>
+      <div className="set-size">
+        <button className="btn" aria-label={t.smaller} title={t.smaller} disabled={value <= min} onClick={() => onChange(stepScale(value, -1, min, max))}>A−</button>
+        <input type="range" aria-label={label} min={min * 100} max={max * 100} step={FONT_SCALE_STEP * 100} value={Math.round(value * 100)} onChange={(e) => onChange(stepScale(Number(e.target.value) / 100, 0, min, max))} />
+        <button className="btn" aria-label={t.larger} title={t.larger} disabled={value >= max} onClick={() => onChange(stepScale(value, 1, min, max))}>A+</button>
+        <output aria-live="polite">{pct(value)}</output>
+      </div>
+      <button className="btn" disabled={value === def} onClick={() => onChange(def)}>{t.resetDefault}</button>
+      <p className="cfg-small set-remembered">{t.setRemembered}</p>
+    </>
   );
 }
 

@@ -12,7 +12,7 @@ import { Terminal, loadPty, whenTerminalEnds } from './terminal.ts';
 import { askOffice } from './proof.ts';
 import { openWithKey } from './open-browser.ts';
 
-const VERSION = '0.2.10';
+const VERSION = '0.2.11';
 const DEFAULT_PORT = 47821;
 
 const args = process.argv.slice(2);

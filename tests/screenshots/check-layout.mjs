@@ -83,10 +83,89 @@ await page.screenshot({ path: path.join(outDir, 'layout-settings-textsize.png') 
 await backToOffice();
 const d2 = await sizes();
 check('text size 120%: pane heads 18px', near(d2.font, 18, 0.01), String(d2.font));
-if (d0.termFont !== undefined) check('text size 120%: terminal 13px -> 16px', d0.termFont === 13 && d2.termFont === 16, `${d0.termFont} -> ${d2.termFont}`);
+if (d0.termFont !== undefined) check('text size 120%: terminal keeps its own size (13px)', d0.termFont === 13 && d2.termFont === 13,`${d0.termFont} -> ${d2.termFont}`);
 else console.log('skip built-in terminal not available here');
 check('no page overflow at 120%', !d2.overflow);
 await page.screenshot({ path: path.join(outDir, 'layout-dragged-120.png') });
+
+// Terminal text size: its own setting, three steps up; the rest of Office stays at 120%.
+const stored = (key) => page.evaluate((k) => localStorage.getItem(k), key);
+await openDisplay('ターミナルの文字の大きさ');
+for (let i = 0; i < 3; i++) await page.click('.set-size button:last-of-type');
+check('terminal text size shows 130%', (await page.locator('.set-size output').textContent()) === '130%');
+check('terminal text size is stored on its own', (await stored('office.termScale')) === '1.3' && (await stored('office.fontScale')) === '1.2');
+await page.screenshot({ path: path.join(outDir, 'layout-settings-termsize.png') });
+await backToOffice();
+const dT = await sizes();
+check('terminal text size 130%: pane heads still 18px', near(dT.font, 18, 0.01), String(dT.font));
+if (d0.termFont !== undefined) {
+  check('terminal text size 130%: terminal 13px -> 17px', dT.termFont === 17, String(dT.termFont));
+  // The same setting in the terminal's "more actions" menu (no A-/A+ in the bar itself).
+  // The terminal's "more actions" menu: two items only, no scrolling, narrower than the terminal.
+  check('no text size buttons in the terminal bar', (await page.locator('.term-bar .set-size').count()) === 0);
+  await page.click('.term-bar .menu-btn');
+  const menu = await page.evaluate(() => {
+    const m = document.querySelector('.menu-body');
+    return { items: [...m.querySelectorAll('[role=menuitem]')].map((e) => e.textContent), scrolls: m.scrollHeight > m.clientHeight || m.scrollWidth > m.clientWidth, w: m.getBoundingClientRect().width, termW: document.querySelector('.term').getBoundingClientRect().width, focus: document.activeElement?.textContent };
+  });
+  check('menu: two items', menu.items.join('|') === '作業フォルダを変更|ターミナルの文字の大きさ', menu.items.join('|'));
+  check('menu: no scrollbar, narrower than half the terminal', !menu.scrolls && menu.w < menu.termW / 2, `${menu.w} / ${menu.termW}`);
+  check('menu: first item focused', menu.focus === '作業フォルダを変更');
+  await page.screenshot({ path: path.join(outDir, 'layout-terminal-menu.png') });
+  await page.keyboard.press('Escape');
+  check('Escape closes the menu, focus back on its button', (await page.locator('.menu-body').count()) === 0 && (await page.evaluate(() => document.activeElement?.classList.contains('menu-btn'))));
+
+  // Text size dialog.
+  await page.click('.term-bar .menu-btn');
+  await page.getByRole('menuitem', { name: 'ターミナルの文字の大きさ' }).click();
+  check('size dialog: open, menu closed, shows 130%', (await page.locator('dialog.dlg-size[open]').count()) === 1 && (await page.locator('.menu-body').count()) === 0 && (await page.locator('.dlg-size output').textContent()) === '130%');
+  const inView = () => page.evaluate(() => {
+    const r = document.querySelector('dialog[open]').getBoundingClientRect();
+    return r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth;
+  });
+  check('size dialog: fully inside the window', await inView());
+  await page.click('.dlg-size button[aria-label="小さく"]');
+  check('size dialog A-: 120% = 16px', (await sizes()).termFont === 16 && (await stored('office.termScale')) === '1.2');
+  await page.screenshot({ path: path.join(outDir, 'layout-terminal-size-dialog.png') });
+  await page.locator('.dlg-size .dlg-body > .btn').click();
+  check('size dialog reset: 100% = 13px', (await sizes()).termFont === 13 && (await stored('office.termScale')) === '1');
+  await page.click('.dlg-size button[aria-label="大きく"]');
+  await page.click('.dlg-size button[aria-label="大きく"]');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('dialog', { state: 'detached', timeout: 2000 }).catch(() => {});
+  check('Escape closes the dialog, focus back on the menu button',(await page.locator('dialog[open]').count()) === 0 && (await page.evaluate(() => document.activeElement?.classList.contains('menu-btn'))), await page.evaluate(() => `${document.querySelectorAll('dialog').length} ${document.activeElement?.outerHTML.slice(0, 120)}`));
+
+  // Folder dialog: opens on its own, nothing starts or stops until a folder is chosen.
+  await page.click('.term-bar .menu-btn');
+  await page.getByRole('menuitem', { name: '作業フォルダを変更' }).click();
+  const fd = await page.evaluate(() => {
+    const d = document.querySelector('dialog.dlg-folder[open]');
+    return d && { modes: [...d.querySelectorAll('select option')].map((o) => o.textContent), submitDisabled: d.querySelector('form button').disabled, folders: d.querySelectorAll('.dlg-folders .sess-item').length };
+  });
+  check('folder dialog: three ways to start', fd?.modes.join('|') === '新しいセッション|前回の続きから|過去のセッションから選ぶ', fd?.modes.join('|'));
+  check('folder dialog: empty folder cannot be submitted', fd?.submitDisabled === true);
+  check('folder dialog: fully inside the window', await inView());
+  await page.screenshot({ path: path.join(outDir, 'layout-terminal-folder-dialog.png') });
+  await page.setViewportSize({ width: 390, height: 520 });
+  check('folder dialog: fits a 390x520 window', await inView());
+  await page.screenshot({ path: path.join(outDir, 'layout-terminal-folder-dialog-390.png') });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.locator('.dlg-folder .dlg-head .iconbtn').click();
+  check('close button closes the folder dialog', (await page.locator('dialog[open]').count()) === 0);
+  check('still at 120% after the dialogs', (await stored('office.termScale')) === '1.2');
+  // Ctrl + wheel over the terminal: one step, and the page itself is not zoomed or scrolled.
+  const tb = await page.locator('.term').boundingBox();
+  await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2);
+  await page.keyboard.down('Control');
+  await page.mouse.wheel(0, -120);
+  await page.keyboard.up('Control');
+  await page.waitForTimeout(250);
+  check('Ctrl+wheel up over the terminal: 130% again', (await stored('office.termScale')) === '1.3' && (await sizes()).termFont === 17);
+  await page.mouse.wheel(0, -120);
+  await page.waitForTimeout(250);
+  check('plain wheel does not change the size', (await stored('office.termScale')) === '1.3');
+  check('pane heads unchanged by Ctrl+wheel', near((await sizes()).font, 18, 0.01));
+}
 
 // Remembered across a reload (= the next start of Office: same origin, same browser storage).
 await page.reload();
@@ -95,6 +174,7 @@ const d3 = await sizes();
 check('reload: office height kept', near(d3.stage, d2.stage, 1), `${d2.stage} -> ${d3.stage}`);
 check('reload: terminal width kept', near(d3.term, d2.term, 1), `${d2.term} -> ${d3.term}`);
 check('reload: text size kept', near(d3.font, 18, 0.01), String(d3.font));
+check('reload: terminal text size kept', (await stored('office.termScale')) === '1.3' && (d3.termFont === undefined || d3.termFont === 17), String(d3.termFont));
 
 // Keyboard on a border, then double-click resets that border only.
 await page.focus('.splitter.v');
@@ -112,12 +192,30 @@ check('maximized: borders hidden', (await page.locator('.splitter:visible').coun
 await page.click('.stage-max');
 check('restored: office height back', near((await sizes()).stage, d5.stage, 1));
 
+// Double-click on the empty part of a pane's header maximizes it; again restores. Not on its controls.
+const paneState = () => page.evaluate(() => document.querySelector('.main').className.match(/max-\w+/)?.[0] ?? 'none');
+for (const [i, name] of [[0, 'terminal'], [1, 'console']]) {
+  const head = page.locator('.bottom > .panel').nth(i).locator('.panel-head');
+  const title = await head.locator('span[id]').boundingBox();
+  const at = { position: { x: title.x + title.width + 30 - (await head.boundingBox()).x, y: 12 } };
+  await head.dblclick(at);
+  check(`double-click on the ${name} header: maximized`, (await paneState()) === `max-${name}`, await paneState());
+  await head.dblclick(at);
+  check(`double-click again: ${name} restored`, (await paneState()) === 'none' && near((await sizes()).stage, d5.stage, 1));
+}
+await page.locator('#agent-pick').dblclick();
+await page.keyboard.press('Escape');
+check('double-click on the agent selector does not maximize', (await paneState()) === 'none');
+
 // Reset both from the settings.
 await openDisplay('エリアの大きさ');
 await page.screenshot({ path: path.join(outDir, 'layout-settings-areas.png') });
 await page.locator('.cfg-scroll .btn').click();
 await page.locator('.cfg-item', { hasText: '文字の大きさ' }).first().click();
 await page.locator('.cfg-scroll > .btn').click();
+await page.locator('.cfg-item', { hasText: 'ターミナルの文字の大きさ' }).first().click();
+await page.locator('.cfg-scroll > .btn').click();
+check('reset: terminal text size default', (await stored('office.termScale')) === '1');
 await backToOffice();
 const d6 = await sizes();
 check('reset: office height default', near(d6.stage, d0.stage, 1), `${d6.stage} vs ${d0.stage}`);
@@ -127,6 +225,12 @@ await page.reload();
 await page.waitForSelector('.splitter.h');
 const d7 = await sizes();
 check('reset is remembered too', near(d7.stage, d0.stage, 1) && near(d7.term, d0.term, 1) && d7.font === 15);
+
+// Updating from 0.2.10: no terminal size stored yet, so the terminal starts from the general text size.
+await page.evaluate(() => { localStorage.removeItem('office.termScale'); localStorage.setItem('office.fontScale', '1.4'); });
+await page.reload();
+await page.waitForSelector('.splitter.h');
+check('update from 0.2.10: terminal starts from the general text size', (await stored('office.termScale')) === '1.4');
 
 // Narrow screens stack the areas: no borders to drag, no sideways overflow even at the largest text.
 await page.evaluate(() => localStorage.setItem('office.fontScale', '1.6'));
