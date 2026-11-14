@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MANAGER_ID, summarize, type AgentState, type SessionState } from '@onecarat/domain';
 import { IconChevronDown } from '../icons.tsx';
 import { dict, displayName, statusText, type Lang } from '../i18n.ts';
+import { WaitRows, waitsOf, type HideWait } from './Waits.tsx';
 
 /** Status mark of one agent: shape and color together (never color alone). */
 export function StatusGlyph({ a }: { a: AgentState }) {
@@ -21,7 +22,7 @@ export function StatusGlyph({ a }: { a: AgentState }) {
   );
 }
 
-export function StageStatus({ session, lang, selectedId, onPick }: { session?: SessionState; lang: Lang; selectedId: string; onPick: (id: string) => void }) {
+export function StageStatus({ session, lang, selectedId, onPick, onHide }: { session?: SessionState; lang: Lang; selectedId: string; onPick: (id: string) => void; onHide?: HideWait }) {
   const t = dict[lang];
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -48,6 +49,8 @@ export function StageStatus({ session, lang, selectedId, onPick }: { session?: S
         {waiting ? <b className="wait">{t.waitingCount.replace('{n}', String(waiting))}</b> : null}
         <IconChevronDown size={16} />
       </button>
+      {/* Who waits and since when; a wait whose prompt is long gone (refused: no hook) can be hidden by the user. */}
+      <WaitRows items={waitsOf(session, lang)} lang={lang} onHide={onHide} />
       {open ? (
         <div className="task-pop" role="dialog" aria-label={t.board}>
           <h3>{t.board}</h3>

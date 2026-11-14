@@ -32,6 +32,8 @@ export type OfficeEvent = {
   sessionId: string;
   source: DataSource;
   agentId?: string;
+  /** The acting subagent's type as the hook reports it (e.g. "web-fetch", "plugin:name"). Only with agentId. */
+  agentType?: string;
   /** Working directory reported by the hook (any event). Used to label sessions joined mid-way. */
   cwd?: string;
   /** permission_mode reported by the hook (default, acceptEdits, plan, auto, bypassPermissions…). Display only. */
@@ -43,20 +45,42 @@ export type OfficeEventBody =
   | { type: 'session.ended'; reason?: string }
   | { type: 'user.prompt'; text: string }
   /** A turn Claude Code started itself (subagent report, task notification, /loop ...). Not shown as a user message. */
-  | { type: 'injected.prompt'; kind: string; fromAgentId?: string; preview: string }
+  /** taskStatus: the <status> of a task-notification ("completed" ...), as Claude Code wrote it. */
+  | { type: 'injected.prompt'; kind: string; fromAgentId?: string; taskStatus?: string; preview: string }
   | { type: 'tool.started'; toolUseId: string; toolName: string; activity: Activity; detail: string }
   | { type: 'tool.finished'; toolUseId: string; toolName: string; durationMs?: number }
   | { type: 'tool.failed'; toolUseId?: string; toolName: string; error: string; interrupted: boolean }
   | { type: 'permission.requested'; toolName: string; detail: string }
   | { type: 'notification'; kind: string; message: string }
+  /**
+   * Not a hook: the user pressed "hide this wait" on the Office page for the event's agent. Only the display
+   * changes. Nothing is sent to Claude Code, and it says nothing about how the prompt was answered.
+   */
+  | { type: 'wait.dismissed' }
   /** Main agent asked for a subagent (before it exists). */
   | { type: 'subagent.requested'; toolUseId: string; description: string; subagentType: string }
-  /** Claude Code confirmed which agent id belongs to a request (PostToolUse of the Agent tool). */
+  /**
+   * Claude Code confirmed which agent id belongs to a request (PostToolUse of the Agent tool; the event's agentId
+   * is the caller). finished = the call returned with the result (not a background launch): that child has ended.
+   */
   | { type: 'subagent.linked'; toolUseId: string; childId: string; finished: boolean }
   | { type: 'subagent.started'; childId: string; agentType: string }
   | { type: 'subagent.reported'; message: string }
   | { type: 'subagent.stopped'; childId: string; agentType: string; lastMessage?: string }
-  | { type: 'turn.stopped'; lastMessage?: string };
+  /** backgroundTasks: what was still running in the background when the main turn ended (absent = not reported). */
+  | { type: 'turn.stopped'; lastMessage?: string; backgroundTasks?: BackgroundTask[] }
+  /**
+   * A file was written as a whole (Write finished). `name` is the display name (last two parts of the path).
+   * `path` (the full path) is set by the adapter and never leaves the bridge: before an event is stored or sent
+   * to the page, the bridge replaces it by `fileId`, which is all the page needs to ask for "open folder".
+   */
+  | { type: 'file.created'; name: string; fileId?: string; path?: string };
+
+export interface BackgroundTask {
+  id: string;
+  status: string;
+  agentType?: string;
+}
 
 export type OfficeEventType = OfficeEventBody['type'];
 
@@ -88,6 +112,16 @@ export interface AgentState {
   createdAt: number;
   updatedAt: number;
   evidence: EvidenceLine[];
+  /**
+   * Permission requests of this agent that no later event has closed, oldest first (absent when none).
+   * A refusal sends no hook, so an entry can outlive its prompt; `at` tells how old it is.
+   */
+  waits?: PermissionWait[];
+}
+
+export interface PermissionWait {
+  at: number;
+  toolName: string;
 }
 
 export interface ChatMessage {
@@ -95,6 +129,17 @@ export interface ChatMessage {
   at: number;
   from: 'user' | 'manager';
   text: string;
+}
+
+/** A file Claude Code wrote in this session. `turn` = which user request it belongs to. */
+export interface CreatedFile {
+  /** The bridge's id for the file (the page never has the full path). */
+  id: string;
+  /** Display name: the last two parts of the path. */
+  name: string;
+  at: number;
+  turn: number;
+  agentId?: string;
 }
 
 export interface SessionState {
@@ -116,11 +161,19 @@ export interface SessionState {
   pendingRequests: { toolUseId: string; description: string; subagentType: string; childId?: string }[];
   /** Agent ids whose SubagentStart we saw. Stops without a start are internal agents and are ignored. */
   knownChildren: string[];
+  /** Agent ids known only from their own tool events (no SubagentStart: e.g. web-fetch helpers). */
+  unannounced: string[];
+  /** A PermissionRequest hook was seen: permission waits come from those, not from the notice (which names no agent). */
+  permissionHooks?: boolean;
   /**
    * tool_use_ids that already finished. Async hooks can arrive out of order, so a late PreToolUse
    * for a finished call must not put the agent back to "working".
    */
   finishedTools: string[];
+  /** Number of user requests seen so far. */
+  turn: number;
+  /** Files written (Write), newest last, one entry per file. */
+  files: CreatedFile[];
 }
 
 export interface OfficeState {

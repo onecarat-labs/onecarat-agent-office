@@ -88,6 +88,11 @@ test('forwarder strips file contents and unknown fields', () => {
   assert.deepEqual(p, { hook_event_name: 'PreToolUse', session_id: 's', tool_name: 'Write', tool_input: { file_path: 'a.ts' } });
   const ag = pickHookFields({ hook_event_name: 'PostToolUse', session_id: 's', tool_name: 'Agent', tool_response: { agentId: 'a1', isAsync: true, prompt: 'long' } });
   assert.deepEqual(ag.tool_response, { agentId: 'a1', isAsync: true, status: undefined });
+  // Stop: which background tasks still run. Id, state and type only: never the description, the output or paths.
+  const stop = pickHookFields({ hook_event_name: 'Stop', session_id: 's', background_tasks: [{ id: 'a1', type: 'subagent', status: 'running', description: 'what the user asked', agent_type: 'p:researcher', output_file: 'C:/x' }, 'junk', { status: 'running' }], session_crons: [{ id: 'c' }], agent_transcript_path: 'C:/t' });
+  assert.deepEqual(stop, { hook_event_name: 'Stop', session_id: 's', background_tasks: [{ id: 'a1', status: 'running', agent_type: 'p:researcher' }] });
+  // Only on Stop (a subagent's own stop still lists itself as running, so it says nothing).
+  assert.equal(pickHookFields({ hook_event_name: 'SubagentStop', session_id: 's', agent_id: 'a1', background_tasks: [{ id: 'a1', status: 'running' }] }).background_tasks, undefined);
 });
 
 test('forwarder and bridge agree on the runtime file path', () => {
@@ -121,4 +126,68 @@ test('forwarder end-to-end: delivers when bridge runs, silent exit 0 when not', 
   await sleep(150);
   assert.equal(bridge.store.snapshot().find((e) => e.sessionId === 'FWD')?.type, 'turn.stopped');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('E: the page gets a file id and a display name, never the path; /api/reveal takes the id only', async () => {
+  const shown: string[] = [];
+  const P = 47913;
+  const b = createBridge({ port: P, token: TOKEN, version: 'test', reorderWindowMs: 20, reveal: (p) => (shown.push(p), true) });
+  await new Promise<void>((r) => b.server.listen(P, '127.0.0.1', () => r()));
+  try {
+    const call = (method: string, p: string, headers: Record<string, string>, body: string) =>
+      new Promise<number>((resolve, reject) => {
+        const r = http.request({ host: '127.0.0.1', port: P, method, path: p, headers }, (res) => { res.resume(); res.on('end', () => resolve(res.statusCode ?? 0)); });
+        r.on('error', reject);
+        r.end(body);
+      });
+    const auth = { 'content-type': 'application/json', 'x-office-token': TOKEN };
+    const file = process.platform === 'win32' ? 'C:\\proj\\docs\\spec.md' : '/proj/docs/spec.md';
+    await call('POST', '/hook', auth, JSON.stringify({ hook_event_name: 'PostToolUse', session_id: 'R1', tool_name: 'Write', tool_use_id: 'w1', tool_input: { file_path: file } }));
+    await sleep(80);
+    // What is stored (and so sent to the page): no path anywhere, a name of two parts and an id.
+    const stored = b.store.snapshot();
+    const made = stored.find((e) => e.type === 'file.created');
+    assert.ok(made && made.type === 'file.created');
+    assert.deepEqual([made.name, made.path, typeof made.fileId], ['docs/spec.md', undefined, 'string']);
+    assert.ok(!JSON.stringify(stored).includes('proj'), 'the folder above the last two parts is not in any event');
+    const id = made.fileId!;
+    assert.equal(await call('POST', '/api/reveal', { 'content-type': 'application/json' }, JSON.stringify({ id })), 401);
+    assert.equal(await call('POST', '/api/reveal', { ...auth, origin: 'https://evil.example' }, JSON.stringify({ id })), 403);
+    assert.equal(await call('POST', '/api/reveal', { ...auth, 'sec-fetch-site': 'cross-site' }, JSON.stringify({ id })), 403);
+    // A path is not accepted, not even the recorded one; nor an unknown id.
+    assert.equal(await call('POST', '/api/reveal', auth, JSON.stringify({ id: file })), 404);
+    assert.equal(await call('POST', '/api/reveal', auth, JSON.stringify({ path: file })), 400);
+    assert.equal(await call('POST', '/api/reveal', auth, JSON.stringify({ id: 'f'.repeat(24) })), 404);
+    assert.equal(await call('POST', '/api/reveal', auth, 'not json'), 400);
+    assert.deepEqual(shown, []);
+    assert.equal(await call('POST', '/api/reveal', auth, JSON.stringify({ id })), 200);
+    assert.deepEqual(shown, [file]);
+  } finally {
+    await b.close();
+  }
+});
+
+test('reveal: the file manager is started by absolute path with the path quoted', async () => {
+  const { revealCommand } = await import('../src/reveal.ts');
+  const w = revealCommand('C:/proj/my docs/spec.md', true, 'win32', { SystemRoot: 'C:\\Windows' })!;
+  assert.equal(w.file, 'C:\\Windows\\explorer.exe');
+  assert.deepEqual(w.args, ['/select,"C:\\proj\\my docs\\spec.md"']);
+  assert.equal(revealCommand('C:\\a"b\\c.md', true, 'win32', {}), undefined);
+  assert.deepEqual(revealCommand('/p/a.md', true, 'darwin'), { file: '/usr/bin/open', args: ['-R', '/p/a.md'] });
+  // Linux: xdg-open is resolved to an absolute path from absolute PATH entries; a bare name is never run.
+  const { findOnPath } = await import('../src/reveal.ts');
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'office-bin-'));
+  try {
+    const opener = path.join(bin, 'xdg-open');
+    fs.writeFileSync(opener, '#!/bin/sh\n', { mode: 0o755 });
+    const PATH = ['.', 'relative/bin', path.join(bin, 'missing'), bin].join(path.delimiter);
+    assert.equal(findOnPath('xdg-open', PATH), opener);
+    assert.equal(findOnPath('xdg-open', ['.', 'relative/bin'].join(path.delimiter)), undefined, 'the working folder and relative entries are never used');
+    assert.equal(findOnPath('xdg-open', undefined), undefined);
+    assert.deepEqual(revealCommand('/p/a.md', true, 'linux', { PATH }), { file: opener, args: ['/p'] });
+    assert.deepEqual(revealCommand('/p', false, 'linux', { PATH }), { file: opener, args: ['/p'] });
+    assert.equal(revealCommand('/p/a.md', true, 'linux', { PATH: '.' }), undefined, 'no xdg-open found: nothing is started');
+  } finally {
+    fs.rmSync(bin, { recursive: true, force: true });
+  }
 });

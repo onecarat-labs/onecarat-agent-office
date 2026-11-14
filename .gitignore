@@ -5,3 +5,5 @@ packages/*/dist/
 # Windows reserved name created by a stray redirect
 nul
 tests/screenshots/out/
+# Research Lab results written while trying the app in this repository (never part of the product)
+/research/

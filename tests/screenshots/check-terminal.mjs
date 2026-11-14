@@ -1,11 +1,18 @@
 // Check: access key handling and the built-in terminal, in a real browser (Edge, headless).
 // Starts the embedded `claude` with the button, waits for its UI and its SessionStart hook, then stops it.
 // It never types into the terminal (no prompt is sent, no model call).
-// Usage: node tests/screenshots/check-terminal.mjs <outDir>
+//
+// THIS ACTS ON THE RUNNING OFFICE: it presses "start Claude Code" and "stop Claude Code" in the real app. Stopping
+// ends the Claude Code session in the Office terminal, and Office itself with it. It is for the user to run, on
+// purpose. Without ONECARAT_OFFICE_LIVE=1 it does nothing.
+// Usage: ONECARAT_OFFICE_LIVE=1 node tests/screenshots/check-terminal.mjs <outDir>
 import { chromium } from 'playwright-core';
 import path from 'node:path';
 import fs from 'node:fs';
 import { readRuntimeFile } from '../../packages/event-bridge/src/runtime-file.ts';
+import { requireLive } from './live-guard.mjs';
+
+requireLive('check-terminal.mjs', 'starts and STOPS Claude Code in the running Office (the session in its terminal ends, and Office stops)');
 
 const [outDir = 'tests/screenshots/out'] = process.argv.slice(2);
 fs.mkdirSync(outDir, { recursive: true });
@@ -45,7 +52,7 @@ result.urlAfterLoad = page.url();
 result.keyRemovedFromUrl = !page.url().includes(rt.token);
 result.chipsBefore = await page.locator('.chip').allTextContents();
 result.tabs = await page.locator('.tabs [role=tab]').allTextContents();
-result.cwd = await page.locator('.term-cwd').textContent();
+result.cwd = await page.locator('.panel:not(.mode-off) .term-cwd').textContent();
 await shot(page, 'terminal-idle');
 
 // 3) start claude from the button and wait for its screen + hook session
@@ -54,7 +61,7 @@ const t0 = Date.now();
 let screen = '';
 for (let i = 0; i < 40; i++) {
   await page.waitForTimeout(500);
-  screen = await page.locator('.term .xterm-rows').innerText().catch(() => '');
+  screen = await page.locator('.panel:not(.mode-off) .term .xterm-rows').innerText().catch(() => '');
   if (/Claude Code/.test(screen) && (await page.locator('.chip').allTextContents()).some((c) => /onecarat-agent-office ·/.test(c))) break;
 }
 result.secondsToScreenAndSession = (Date.now() - t0) / 1000;
@@ -66,7 +73,7 @@ await shot(page, 'terminal-running');
 // 4) reload: the key survives in this tab (sessionStorage), the scrollback is replayed from memory
 await page.reload();
 await page.waitForTimeout(2500);
-result.afterReload = { chips: await page.locator('.chip').allTextContents(), screenHasClaude: /Claude Code/.test(await page.locator('.term .xterm-rows').innerText().catch(() => '')) };
+result.afterReload = { chips: await page.locator('.chip').allTextContents(), screenHasClaude: /Claude Code/.test(await page.locator('.panel:not(.mode-off) .term .xterm-rows').innerText().catch(() => '')) };
 
 // 5) stop
 await page.getByRole('button', { name: 'Claude Code を終了' }).click();

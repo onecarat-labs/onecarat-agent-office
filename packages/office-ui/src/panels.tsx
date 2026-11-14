@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { TerminalView } from './TerminalView.tsx';
 import { SizeControl, TERM_SCALE_DEFAULT, TERM_SCALE_MAX, TERM_SCALE_MIN, stepScale } from './config/SettingsView.tsx';
 import type { StartMode, TerminalLink } from './live/useTerminal.ts';
-import { MANAGER_ID, summarize, type AgentState, type SessionState } from '@onecarat/domain';
+import { MANAGER_ID, deliverables, summarize, type AgentState, type SessionState } from '@onecarat/domain';
+import { authHeaders } from './live/token.ts';
 import { IconChat, IconClose, IconConsole, IconFolder, IconMaximize, IconMore, IconTextSize, IconRestore, IconSend, IconSmile, IconTerminal, IconUser } from './icons.tsx';
-import { dict, displayName, modeText, outcomeText, statusText, bubbleText, type Lang } from './i18n.ts';
+import { dict, displayName, modeText, outcomeText, sinceText, statusText, bubbleText, type Lang } from './i18n.ts';
+import { useNow } from './office/Waits.tsx';
 import { expressionOf } from '@onecarat/domain';
 
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -95,7 +97,7 @@ const headDoubleClick = (onMax: () => void) => (e: React.MouseEvent<HTMLElement>
   onMax();
 };
 
-export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax, onStop, officeStopped, fontScale, setFontScale }: { session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string; onStop?: () => void; officeStopped?: boolean; fontScale?: number; setFontScale?: (v: number) => void } & MaxProps) {
+export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax, onStop, officeStopped, fontScale, setFontScale, className = '' }: { className?: string; session?: SessionState; lang: Lang; term?: TerminalLink; cwds: string[]; termMode?: string; onStop?: () => void; officeStopped?: boolean; fontScale?: number; setFontScale?: (v: number) => void } & MaxProps) {
   const t = dict[lang];
   const termOk = !!term && term.state?.available !== false;
   const [tab, setTab] = useState<'terminal' | 'history'>('terminal');
@@ -103,7 +105,7 @@ export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax,
   // Without the built-in terminal (demo, or not available here) the pane only shows the conversation.
   const title = termOk ? t.terminal : t.conversation;
   return (
-    <section className="panel" aria-labelledby="chat-h">
+    <section className={`panel term-slot ${className}`} aria-labelledby="chat-h">
       <div className="panel-head" onDoubleClick={headDoubleClick(onMax)}>
         {termOk ? <IconTerminal size={22} /> : <IconChat size={22} />}
         <span id="chat-h">{title}</span>
@@ -121,7 +123,7 @@ export function TerminalPanel({ session, lang, term, cwds, termMode, max, onMax,
 }
 
 /** The last two folders of a path (the full path is in the tooltip). */
-function shortPath(p: string): string {
+export function shortPath(p: string): string {
   const parts = p.split(/[\\/]/).filter(Boolean);
   if (parts.length <= 2) return p;
   return `…${p.includes('\\') ? '\\' : '/'}${parts.slice(-2).join(p.includes('\\') ? '\\' : '/')}`;
@@ -171,7 +173,7 @@ function Menu({ label, items, btnRef }: { label: string; items: { id: string; ic
  * Modal dialog (the browser's own <dialog>: Escape closes it, focus stays inside, the page behind is inert).
  * Centered in the window and scrolls inside when the window is low, so nothing is cut off by a pane.
  */
-function Dialog({ title, closeLabel, onClose, className = '', children }: { title: string; closeLabel: string; onClose: () => void; className?: string; children: React.ReactNode }) {
+export function Dialog({ title, closeLabel, onClose, className = '', children }: { title: string; closeLabel: string; onClose: () => void; className?: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -347,6 +349,39 @@ function pillClass(a: AgentState): string {
   }
 }
 
+/**
+ * Files Claude Code wrote for requests that produced only a few (a document, a report). A row opens the file's
+ * folder in the system file manager, through the bridge. Live sessions only: a demo has no real files.
+ */
+function CreatedFiles({ session, lang }: { session: SessionState; lang: Lang }) {
+  const t = dict[lang];
+  const [failed, setFailed] = useState<string | undefined>(undefined);
+  const files = deliverables(session);
+  if (!files.length) return null;
+  // The page has only the file's id and display name; the bridge knows the path.
+  const open = async (p: string) => {
+    try {
+      const r = await fetch('/api/reveal', { method: 'POST', headers: { ...authHeaders(), 'content-type': 'application/json' }, body: JSON.stringify({ id: p }) });
+      setFailed(r.ok ? undefined : p);
+    } catch {
+      setFailed(p);
+    }
+  };
+  return (
+    <div>
+      <div className="k">{t.filesCreated}</div>
+      <div className="agent-list">
+        {[...files].reverse().map((f) => (
+          <button key={f.id} className="agent-row" title={t.openFolder} onClick={() => void open(f.id)}>
+            <span className="name">{f.name}</span>
+            <span className={`pill ${failed === f.id ? 'warn' : 'muted'}`}><IconFolder size={14} /> {failed === f.id ? t.openFolderFailed : t.openFolder}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Console selection meaning "nobody": the pane shows the whole session. */
 export const OVERVIEW = '';
 
@@ -356,6 +391,7 @@ export function ConsolePanel({ session, selectedId, onSelect, lang, max, onMax }
   const all = ids.map((id) => session?.agents[id]).filter((x): x is AgentState => !!x);
   const a = selectedId === OVERVIEW ? undefined : session?.agents[selectedId];
   const logRef = useRef<HTMLDivElement>(null);
+  const now = useNow();
   // One agent: its events. Overview: the latest events of everyone, each with the agent's name.
   const lines = a
     ? a.evidence.slice(-80).map((l) => ({ ...l, who: undefined as string | undefined }))
@@ -397,7 +433,7 @@ export function ConsolePanel({ session, selectedId, onSelect, lang, max, onMax }
             ) : null}
             <div>
               <div className="k">{t.status}</div>
-              <span className={`pill ${pillClass(a)}`}>{statusText[lang][a.status]}</span>
+              <span className={`pill ${pillClass(a)}`}>{statusText[lang][a.status]}{a.status === 'waiting_permission' && a.waits?.[0] ? ` (${sinceText(lang, a.waits[0].at, now)})` : ''}</span>
               {a.outcome ? (
                 <div style={{ marginTop: 6 }}>
                   <span className="v">{outcomeText[lang][a.outcome]}</span>
@@ -411,6 +447,7 @@ export function ConsolePanel({ session, selectedId, onSelect, lang, max, onMax }
                 <div className="v">{bubbleText[lang][expr.bubble.key]}{a.activityDetail ? ` · ${a.activityDetail}` : ''}</div>
               </div>
             ) : null}
+            {session?.source === 'live' ? <CreatedFiles session={session} lang={lang} /> : null}
           </div>
         ) : (
           <div className="facts">
@@ -431,6 +468,7 @@ export function ConsolePanel({ session, selectedId, onSelect, lang, max, onMax }
                 </div>
               </div>
             ) : null}
+            {session?.source === 'live' ? <CreatedFiles session={session} lang={lang} /> : null}
           </div>
         )}
         <div className="log" ref={logRef} role="log" aria-label={t.console}>

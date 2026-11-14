@@ -7,3 +7,6 @@ export * from './terminal.ts';
 export * from './child-env.ts';
 export * from './claude-path.ts';
 export * from './config-scan.ts';
+export * from './reveal.ts';
+export * from './research.ts';
+export * from './research-result.ts';

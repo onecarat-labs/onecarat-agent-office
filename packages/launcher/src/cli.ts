@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Onecarat Agent Office launcher: check | start | stop | status | open
 // Plain Node, no dependencies at run time. It never calls a model and never touches Claude credentials.
+// It runs claude itself in one case only: `check` runs `claude --version` (see claude-version.ts).
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -12,6 +13,7 @@ import { resolveClaude } from '@onecarat/event-bridge/claude-path';
 import { askOffice } from '@onecarat/event-bridge/proof';
 import { openWithKey } from '@onecarat/event-bridge/open-browser';
 import { bridgeArgs, parseLauncherArgs } from './args.ts';
+import { readClaudeVersion, researchLines } from './claude-version.ts';
 
 const MIN_NODE_MAJOR = 18;
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -177,6 +179,8 @@ function check() {
   const claude = resolveClaude();
   console.log(`Built-in terminal: ${term ? `available (${plat})` : `not available for ${plat} — Office runs read-only`}`);
   console.log(`claude: ${claude ?? 'not found on PATH — the built-in terminal cannot start it'}`);
+  // `check` is the only command that runs claude itself, and only as `claude --version` (claude-version.ts).
+  for (const line of researchLines(readClaudeVersion(claude, childEnv()), !!claude)) console.log(line);
   if (!ok) process.exitCode = 1;
 }
 

@@ -49,6 +49,11 @@ export function loadPty(candidates: string[]): PtyLoad {
   return { ok: false, reason: reasons[0] ?? 'node-pty is not bundled' };
 }
 
+/** Plain text on one line: C0/C1 control characters, DEL and Unicode line separators become spaces. */
+export function oneLine(text: string): string {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').replace(/ {2,}/g, ' ').trim();
+}
+
 export interface TerminalState {
   available: boolean;
   reason?: string;
@@ -201,6 +206,21 @@ export class Terminal {
   /** Keystrokes typed by the user in the Office tab. Office itself never calls this with its own input. */
   write(d: string): void {
     this.proc?.write(d);
+  }
+
+  /**
+   * Research Lab only: the one text Office ever writes to this terminal by itself. Called once per "Start
+   * research" the user pressed. The command is pasted as one line into the input box; NOTHING is sent: Enter is
+   * always the user's. Every control character is removed first (also the ones that would end the paste), so the
+   * text cannot act as a key press.
+   */
+  pasteLine(text: string): boolean {
+    const p = this.proc;
+    if (!p) return false;
+    const line = oneLine(text);
+    if (!line) return false;
+    p.write(`\x1b[200~${line}\x1b[201~`);
+    return true;
   }
 
   resize(cols: number, rows: number): void {

@@ -7,6 +7,8 @@ import { FAREWELL_MS, Stage, useStageKeyboard } from './office/Stage.tsx';
 import { StageStatus } from './office/TaskBoard.tsx';
 import { ConsolePanel, MaxToggle, OVERVIEW, SPLIT_MAX, SPLIT_MIN, Splitter, TerminalPanel } from './panels.tsx';
 import { useDemoPlayer } from './demo/useDemoPlayer.ts';
+import { useResearch } from './live/useResearch.ts';
+import { ModeSwitch, ResearchLab, type ViewMode } from './research/ResearchLab.tsx';
 import { IconHome, IconPause, IconPlay, IconRestart, IconSessions, IconSettings, LogoMark } from './icons.tsx';
 import { FONT_SCALE_DEFAULT, FONT_SCALE_MAX, FONT_SCALE_MIN, TERM_SCALE_MAX, TERM_SCALE_MIN, SettingsView, type Motion, type Theme } from './config/SettingsView.tsx';
 import { detectLang, dict, type Lang } from './i18n.ts';
@@ -99,6 +101,66 @@ export function App() {
   const stopped = !isDemo && live.status === 'stopped';
   const liveOk = !isDemo && (live.status === 'connected' || live.status === 'reconnecting' || stopped);
   const term = useTerminal(liveOk && !stopped);
+  // Research Lab: another view of the same Claude Code session (the manager and its researchers); its state is in
+  // the bridge. Switching the view only changes what is shown: nothing is started, stopped or reset by it.
+  const [mode, setMode] = useState<ViewMode>('office');
+  const research = useResearch(liveOk && !stopped);
+  const researchSid = research.info?.current?.sessionId;
+  const researchSession = researchSid ? state.sessions[researchSid] : undefined;
+
+  // ---- the two automatic view changes of a research started from the page (never more than these) ----
+  //   1. after "Start research" pasted the command: to the Office view, where Enter is pressed;
+  //   2. after the researchers have appeared there: back to the Research Lab.
+  // If a permission request is open at that moment (no hook has closed it; hiding it on the page does not count),
+  // 2 is not made: a button is shown instead. The page never
+  // moves from the Research Lab to the Office view by itself. Once the user changes the view by hand, nothing
+  // is switched automatically for that research any more.
+  const auto = useRef<{ id?: string; step: 'armed' | 'return' | 'off' }>({ step: 'off' });
+  const [heldFor, setHeldFor] = useState<string | undefined>(undefined);
+  const showMode = useCallback((m: ViewMode) => {
+    // A pane filling the whole area would hide what the other view is for.
+    setMaxPane((cur) => (m === 'research' && cur !== 'stage' ? undefined : cur));
+    setMode(m);
+  }, []);
+  const userMode = useCallback((m: ViewMode) => {
+    auto.current = { step: 'off' };
+    setHeldFor(undefined);
+    showMode(m);
+  }, [showMode]);
+  const onStartPressed = useCallback(() => { auto.current = { step: 'armed' }; setHeldFor(undefined); }, []);
+  const rc = research.info?.current;
+  const rcRef = useRef(rc);
+  rcRef.current = rc;
+  const termWaitsRef = useRef(0);
+  // Every request no hook has closed counts, also one the user hid on the page: hiding is not evidence.
+  termWaitsRef.current = research.info?.terminal.unresolved ?? research.info?.terminal.waits?.length ?? 0;
+  const rcId = rc?.id;
+  const rcStatus = rc?.status;
+  const rcPasted = !!rc?.pasted;
+  const rcPeople = rc?.researchers.length ?? 0;
+  useEffect(() => {
+    const a = auto.current;
+    if (!rcId || a.step === 'off') return;
+    if (a.step === 'armed') {
+      if (rcRef.current?.origin !== 'button' || rcStatus !== 'awaiting-enter') return;
+      // Not pasted: the command is shown in the Research Lab for copying, so the view stays there.
+      if (!rcPasted) { auto.current = { step: 'off' }; return; }
+      auto.current = { id: rcId, step: 'return' };
+      showMode('office');
+      return;
+    }
+    if (a.id !== rcId || (rcStatus !== 'awaiting-enter' && rcStatus !== 'researching')) { auto.current = { step: 'off' }; return; }
+    if (rcStatus !== 'researching' || rcPeople === 0) return;
+    // The researchers walk in and sit down first (the timer starts again when another one appears).
+    const tm = setTimeout(() => {
+      if (auto.current.step !== 'return' || auto.current.id !== rcId) return;
+      auto.current = { step: 'off' };
+      if ((rcRef.current?.unresolved ?? rcRef.current?.waiting.length ?? 0) > 0 || termWaitsRef.current > 0) setHeldFor(rcId);
+      else showMode('research');
+    }, motion ? 4500 : 1200);
+    return () => clearTimeout(tm);
+  }, [rcId, rcStatus, rcPasted, rcPeople, motion, showMode]);
+  const returnHeld = !!heldFor && heldFor === rcId;
 
   const [pinnedSession, setPinnedSession] = useState<string | undefined>(undefined);
   // Goodbye after "Stop Claude Code": keeps the stage on the session that was shown while the figures bow and wave.
@@ -250,10 +312,12 @@ export function App() {
       ) : null}
 
       {view === 'settings' ? <SettingsView lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} motion={motionPref} setMotion={setMotionPref} fontScale={fontScale} setFontScale={setFontScale} termScale={termScale} setTermScale={setTermScale} layout={{ stage: stageSplit, terminal: termSplit, custom: layoutCustom }} resetLayout={resetLayout} cwds={cwds} live={liveOk && !stopped} /> : null}
-      <main className={`main${maxPane ? ` max-${maxPane}` : ''}${view === 'settings' ? ' hidden' : ''}`} style={{ '--stage-fr': `${stageSplit * 100}fr`, '--bottom-fr': `${(1 - stageSplit) * 100}fr`, '--term-fr': `${termSplit * 100}fr`, '--console-fr': `${(1 - termSplit) * 100}fr` } as React.CSSProperties}>
-        <div className="stage" onKeyDown={onStageKey}>
-          <MaxToggle on={maxPane === 'stage'} onToggle={() => toggleMax('stage')} lang={lang} className="stage-max" />
-          <StageStatus session={session} lang={lang} selectedId={selectedId} onPick={onSelect} />
+      <main className={`main view-${mode}${maxPane ? ` max-${maxPane}` : ''}${view === 'settings' ? ' hidden' : ''}`} style={{ '--stage-fr': `${stageSplit * 100}fr`, '--bottom-fr': `${(1 - stageSplit) * 100}fr`, '--term-fr': `${termSplit * 100}fr`, '--console-fr': `${(1 - termSplit) * 100}fr` } as React.CSSProperties}>
+        <div className={`stage mode-${mode}`} onKeyDown={mode === 'office' ? onStageKey : undefined}>
+          <ModeSwitch mode={mode} setMode={userMode} lang={lang} research={research} held={returnHeld} />
+          <ResearchLab research={research} session={researchSession} termSession={term.state?.sessionId ? state.sessions[term.state.sessionId] : undefined} lang={lang} motion={motion} live={liveOk && !stopped} goOffice={() => userMode('office')} onStartPressed={onStartPressed} />
+          {mode === 'office' ? <MaxToggle on={maxPane === 'stage'} onToggle={() => toggleMax('stage')} lang={lang} className="stage-max" /> : null}
+          <StageStatus session={session} lang={lang} selectedId={selectedId} onPick={onSelect} onHide={isDemo || stopped ? undefined : research.hideWait} />
           <div className="stage-scroll"><Stage session={session} selectedId={selectedId} onSelect={onFigure} motion={motion} lang={lang} demo={isDemo} farewellAt={farewell?.at} ended={sessionOver} /></div>
           {isDemo ? <div className="demo-ribbon">{t.demoRibbon}</div> : null}
           {!isDemo && live.status === 'locked' ? <div className="live-waiting">{t.locked}</div> : null}
@@ -266,6 +330,7 @@ export function App() {
         </div>
         <Splitter orientation="horizontal" value={stageSplit} onChange={setStageSplit} onReset={() => setStageSplit(STAGE_SPLIT_DEFAULT)} label={t.splitRows} />
         <div className="bottom">
+          {/* One terminal, shown in the Office view only (it stays mounted in the Research Lab view, so its session goes on): Enter and every permission answer are the user's, here. */}
           <TerminalPanel fontScale={termScale} setFontScale={setTermScale} session={session} lang={lang} term={liveOk ? term : undefined} cwds={cwds} termMode={term.state?.sessionId ? state.sessions[term.state.sessionId]?.permissionMode : undefined} max={maxPane === 'terminal'} onMax={() => toggleMax('terminal')} onStop={() => { if (termHadSession) sayGoodbye(sessionId); }} officeStopped={stopped} />
           <Splitter orientation="vertical" value={termSplit} onChange={setTermSplit} onReset={() => setTermSplit(TERM_SPLIT_DEFAULT)} label={t.splitCols} />
           <ConsolePanel session={session} selectedId={selectedId} onSelect={onSelect} lang={lang} max={maxPane === 'console'} onMax={() => toggleMax('console')} />

@@ -310,11 +310,11 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
   );
 }
 
-function DeskBack({ x, w, manager }: { x: number; w: number; manager?: boolean }) {
+export function DeskBack({ x, w, manager }: { x: number; w: number; manager?: boolean }) {
   return <path className={manager ? 'desk-mgr-top' : 'desk-top'} d={`M${x - w / 2 + 14} 330 h${w - 28} l14 16 h${-w} Z`} />;
 }
 
-function DeskFront({ x, w, label, manager }: { x: number; w: number; label: string; manager?: boolean }) {
+export function DeskFront({ x, w, label, manager }: { x: number; w: number; label: string; manager?: boolean }) {
   const lw = Math.max(90, [...label].reduce((n, c) => n + (/[^\x00-\x7f]/.test(c) ? 19 : 10.5), 0) + 34);
   return (
     <g>
@@ -379,7 +379,7 @@ const ATTENTION: ReadonlySet<string> = new Set(['waiting_permission', 'blocked',
  * Small status label above a figure. No progress bar: Claude Code reports no progress, so nothing here may look
  * like one. "busy" is a pulsing dot only.
  */
-function Bubble({ text, tone, busy, attention }: { text: string; tone: string; busy: boolean; attention: boolean }) {
+export function Bubble({ text, tone, busy, attention }: { text: string; tone: string; busy: boolean; attention: boolean }) {
   const tw = [...text].reduce((n, c) => n + (/[^\x00-\x7f]/.test(c) ? 15.5 : 8.4), 0);
   const dot = busy ? 15 : 0;
   const w = Math.max(54, Math.round(tw) + 24 + dot);

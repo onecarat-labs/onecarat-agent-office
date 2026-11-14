@@ -66,13 +66,13 @@ var require_buffer_util = __commonJS({
     "use strict";
     var { EMPTY_BUFFER } = require_constants();
     var FastBuffer = Buffer[Symbol.species];
-    function concat(list, totalLength) {
-      if (list.length === 0) return EMPTY_BUFFER;
-      if (list.length === 1) return list[0];
+    function concat(list2, totalLength) {
+      if (list2.length === 0) return EMPTY_BUFFER;
+      if (list2.length === 1) return list2[0];
       const target = Buffer.allocUnsafe(totalLength);
       let offset = 0;
-      for (let i = 0; i < list.length; i++) {
-        const buf = list[i];
+      for (let i = 0; i < list2.length; i++) {
+        const buf = list2[i];
         target.set(buf, offset);
         offset += buf.length;
       }
@@ -1858,14 +1858,14 @@ var require_sender = __commonJS({
        * @param {Function} [cb] Callback
        * @private
        */
-      sendFrame(list, cb) {
-        if (list.length === 2) {
+      sendFrame(list2, cb) {
+        if (list2.length === 2) {
           this._socket.cork();
-          this._socket.write(list[0]);
-          this._socket.write(list[1], cb);
+          this._socket.write(list2[0]);
+          this._socket.write(list2[1], cb);
           this._socket.uncork();
         } else {
-          this._socket.write(list[0], cb);
+          this._socket.write(list2[0], cb);
         }
       }
     };
@@ -3721,15 +3721,16 @@ var require_websocket_server = __commonJS({
 });
 
 // packages/event-bridge/src/main.ts
-import fs8 from "node:fs";
+import fs11 from "node:fs";
 import os3 from "node:os";
-import path8 from "node:path";
+import path11 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // packages/event-bridge/src/server.ts
 import http2 from "node:http";
-import fs4 from "node:fs";
-import path4 from "node:path";
+import crypto5 from "node:crypto";
+import fs8 from "node:fs";
+import path8 from "node:path";
 
 // packages/event-bridge/src/store.ts
 var EventStore = class {
@@ -3859,6 +3860,9 @@ function clip(s, n) {
   return one.length > n ? one.slice(0, n) + "\u2026" : one;
 }
 var SENSITIVE_PATH = /(^|[\\/])(\.env(\.[^\\/]*)?|\.credentials\.json|id_(rsa|ed25519|ecdsa)(\.pub)?|[^\\/]*\.(pem|key|p12|pfx))$/i;
+function isSensitivePath(p) {
+  return SENSITIVE_PATH.test(p);
+}
 function displayPath(p) {
   if (typeof p !== "string" || !p) return "";
   if (SENSITIVE_PATH.test(p)) return "(sensitive file)";
@@ -3910,7 +3914,19 @@ function classifyPrompt(text) {
     return { injected: false };
   }
   const from = /\bfrom="([^"]+)"/.exec(m[2] ?? "")?.[1] ?? (tag === "task-notification" ? /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(t)?.[1] : void 0);
-  return { injected: true, kind: tag, fromAgentId: from };
+  const status = tag === "task-notification" ? /<status>\s*([A-Za-z_-]{1,30})\s*<\/status>/.exec(t.split("<result>")[0].slice(0, 2e3))?.[1]?.toLowerCase() : void 0;
+  return { injected: true, kind: tag, fromAgentId: from, taskStatus: status };
+}
+function backgroundTasks(v) {
+  if (!Array.isArray(v)) return void 0;
+  const out = [];
+  for (const t of v.slice(0, 50)) {
+    if (!t || typeof t !== "object") continue;
+    const r = t;
+    if (typeof r.id !== "string" || !r.id) continue;
+    out.push({ id: r.id.slice(0, 200), status: typeof r.status === "string" ? r.status.slice(0, 50) : "", agentType: typeof r.agent_type === "string" && r.agent_type ? r.agent_type.slice(0, 200) : void 0 });
+  }
+  return out;
 }
 function normalizeHook(input, ctx) {
   const sessionId = typeof input.session_id === "string" ? input.session_id : void 0;
@@ -3919,7 +3935,7 @@ function normalizeHook(input, ctx) {
   const agentId = typeof input.agent_id === "string" && input.agent_id ? input.agent_id : void 0;
   const out = [];
   const emit = (body, actor = agentId) => {
-    out.push({ id: `${ctx.seq}.${out.length}`, at: ctx.at, sessionId, source: ctx.source, agentId: actor, cwd: typeof input.cwd === "string" ? input.cwd : void 0, permissionMode: typeof input.permission_mode === "string" ? input.permission_mode : void 0, ...body });
+    out.push({ id: `${ctx.seq}.${out.length}`, at: ctx.at, sessionId, source: ctx.source, agentId: actor, agentType: actor && actor === agentId && typeof input.agent_type === "string" && input.agent_type ? input.agent_type : void 0, cwd: typeof input.cwd === "string" ? input.cwd : void 0, permissionMode: typeof input.permission_mode === "string" ? input.permission_mode : void 0, ...body });
   };
   const toolName = String(input.tool_name ?? "");
   const toolUseId = String(input.tool_use_id ?? "");
@@ -3933,7 +3949,7 @@ function normalizeHook(input, ctx) {
     case "UserPromptSubmit": {
       const text = typeof input.prompt === "string" ? input.prompt : "";
       const c = classifyPrompt(text);
-      if (c.injected) emit({ type: "injected.prompt", kind: c.kind, fromAgentId: c.fromAgentId, preview: clip(maskSecrets(text.replace(/<[^>]+>/g, " ")), 100) }, void 0);
+      if (c.injected) emit({ type: "injected.prompt", kind: c.kind, fromAgentId: c.fromAgentId, taskStatus: c.taskStatus, preview: clip(maskSecrets(text.replace(/<[^>]+>/g, " ")), 100) }, void 0);
       else emit({ type: "user.prompt", text }, void 0);
       break;
     }
@@ -3952,10 +3968,14 @@ function normalizeHook(input, ctx) {
     }
     case "PostToolUse": {
       emit({ type: "tool.finished", toolUseId, toolName, durationMs: typeof input.duration_ms === "number" ? input.duration_ms : void 0 });
-      if (!agentId && (toolName === "Agent" || toolName === "Task")) {
+      if (toolName === "Agent" || toolName === "Task") {
         const r = input.tool_response;
         const childId = typeof r?.agentId === "string" ? r.agentId : void 0;
         if (childId) emit({ type: "subagent.linked", toolUseId, childId, finished: r?.isAsync !== true });
+      }
+      if (toolName === "Write") {
+        const p = input.tool_input?.file_path;
+        if (typeof p === "string" && /^([A-Za-z]:[\\/]|\/)/.test(p) && !p.startsWith("//") && !isSensitivePath(p)) emit({ type: "file.created", name: displayPath(p), path: p });
       }
       break;
     }
@@ -3981,7 +4001,7 @@ function normalizeHook(input, ctx) {
       break;
     case "Stop": {
       const last = typeof input.last_assistant_message === "string" && input.last_assistant_message ? input.last_assistant_message : void 0;
-      emit({ type: "turn.stopped", lastMessage: last }, void 0);
+      emit({ type: "turn.stopped", lastMessage: last, backgroundTasks: backgroundTasks(input.background_tasks) }, void 0);
       break;
     }
     default:
@@ -4069,9 +4089,9 @@ var SECURITY_HEADERS = {
 var CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
 var WS_PROTOCOL = "office.v1";
 function protocolToken(header2) {
-  const list = (Array.isArray(header2) ? header2.join(",") : header2 ?? "").split(",").map((s) => s.trim());
-  if (!list.includes(WS_PROTOCOL)) return void 0;
-  return list.find((p) => p.startsWith("office-token."))?.slice("office-token.".length);
+  const list2 = (Array.isArray(header2) ? header2.join(",") : header2 ?? "").split(",").map((s) => s.trim());
+  if (!list2.includes(WS_PROTOCOL)) return void 0;
+  return list2.find((p) => p.startsWith("office-token."))?.slice("office-token.".length);
 }
 
 // packages/event-bridge/src/config-scan.ts
@@ -4403,241 +4423,67 @@ function claudeCommand(exe, sessionId, env = process.env, platform = process.pla
   return { file: exe, args: argv };
 }
 
-// packages/event-bridge/src/server.ts
-var MIME = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".json": "application/json; charset=utf-8",
-  ".ico": "image/x-icon"
-};
-function createBridge(opts) {
-  const store = new EventStore();
-  const broadcaster = new Broadcaster(store);
-  const reorder = new ReorderBuffer(opts.reorderWindowMs ?? 300, (b) => store.append(b));
-  const stats = { received: 0, rejected: 0 };
-  const uiRoot = opts.uiDir ? path4.resolve(opts.uiDir) : void 0;
-  const send = (res, code, body, type = "application/json; charset=utf-8", extra = {}) => {
-    res.writeHead(code, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
-    res.end(body);
-  };
-  const server = http2.createServer((req, res) => {
-    handle(req, res).catch((e) => {
-      stats.rejected++;
-      if (!res.headersSent) send(res, e instanceof URIError ? 400 : 500, "{}");
-      else res.destroy();
-    });
-  });
-  async function handle(req, res) {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    if (!hostAllowed(req, opts.port)) {
-      stats.rejected++;
-      return send(res, 421, '{"error":"host not allowed"}');
-    }
-    if (url.pathname === "/hook") {
-      if (req.method !== "POST") return send(res, 405, "{}");
-      if (looksLikeBrowser(req) || !tokenMatches(req.headers["x-office-token"], opts.token)) {
-        stats.rejected++;
-        req.resume();
-        return send(res, 403, "{}");
-      }
-      if (!(req.headers["content-type"] ?? "").startsWith("application/json")) {
-        stats.rejected++;
-        req.resume();
-        return send(res, 415, "{}");
-      }
-      try {
-        const body = await readBody(req);
-        send(res, 200, "{}");
-        stats.received++;
-        const events = eventsFromHookBody(body, header(req, "x-office-hook-time"));
-        const run = header(req, "x-office-terminal");
-        if (run && opts.terminal) {
-          for (const e of events) if (e.type === "session.started") opts.terminal.adoptSession(run, e.sessionId);
-        }
-        reorder.push(events);
-      } catch (e) {
-        stats.rejected++;
-        if (!res.headersSent) send(res, e instanceof BodyTooLarge ? 413 : 400, "{}");
-      }
-      return;
-    }
-    if (crossSite(req, opts.port, opts.devOrigins)) {
-      stats.rejected++;
-      return send(res, 403, '{"error":"cross-site"}');
-    }
-    const authed = tokenMatches(req.headers["x-office-token"], opts.token);
-    if (url.pathname === "/api/health" && req.method === "GET") {
-      const nonce = header(req, "x-office-nonce");
-      const base2 = { ok: true, app: "onecarat-agent-office", version: opts.version, authed, ...nonce && NONCE_RE.test(nonce) ? { proof: healthProof(opts.token, nonce) } : {} };
-      if (!authed) return send(res, 200, JSON.stringify(base2));
-      const terminal2 = opts.terminal?.state ?? { available: false, reason: "disabled", running: false };
-      return send(res, 200, JSON.stringify({ ...base2, events: store.size, clients: broadcaster.count, received: stats.received, terminal: terminal2 }));
-    }
-    if (url.pathname.startsWith("/api/") || url.pathname === "/events") {
-      if (!authed) {
-        stats.rejected++;
-        return send(res, 401, '{"error":"token required"}');
-      }
-    }
-    if (url.pathname === "/events" && req.method === "GET") {
-      broadcaster.attach(res, SECURITY_HEADERS);
-      return;
-    }
-    if (url.pathname === "/api/clear" && req.method === "POST") {
-      store.clear();
-      broadcaster.reset();
-      opts.terminal?.clearScrollback();
-      return send(res, 200, "{}");
-    }
-    if (url.pathname === "/api/config" && req.method === "GET") {
-      if (!opts.config) return send(res, 404, "{}");
-      const asked = url.searchParams.get("cwd");
-      let cwd = opts.config.defaultCwd;
-      if (asked) {
-        if (!isLocalDir(asked)) return send(res, 400, '{"error":"bad cwd"}');
-        cwd = asked;
-      }
-      return send(res, 200, JSON.stringify(scanConfig({ cwd, home: opts.config.home, configDir: opts.config.configDir, managedDir: opts.config.managedDir })));
-    }
-    if (url.pathname === "/api/shutdown" && req.method === "POST") {
-      send(res, 200, "{}");
-      opts.onShutdownRequest?.();
-      return;
-    }
-    if ((req.method === "GET" || req.method === "HEAD") && uiRoot) {
-      let rel;
-      try {
-        rel = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
-      } catch {
-        return send(res, 400, "bad path", "text/plain");
-      }
-      if (rel.includes("\0")) return send(res, 400, "bad path", "text/plain");
-      const file = path4.resolve(uiRoot, "." + rel);
-      if (!file.startsWith(uiRoot + path4.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
-      fs4.readFile(file, (err, data) => {
-        if (err) return send(res, 404, "not found", "text/plain");
-        const type = MIME[path4.extname(file).toLowerCase()] ?? "application/octet-stream";
-        const extra = type.startsWith("text/html") ? { "content-security-policy": CSP } : {};
-        if (rel.startsWith("/assets/")) extra["cache-control"] = "public, max-age=31536000, immutable";
-        res.writeHead(200, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
-        res.end(req.method === "HEAD" ? void 0 : data);
-      });
-      return;
-    }
-    send(res, 404, "{}");
+// packages/event-bridge/src/reveal.ts
+import fs4 from "node:fs";
+import path4 from "node:path";
+import { spawn } from "node:child_process";
+function revealTarget(p, platform = process.platform, env = process.env) {
+  const st = fs4.lstatSync(p, { throwIfNoEntry: false });
+  if (st?.isFile()) return revealCommand(p, true, platform, env);
+  const parent = path4.dirname(p);
+  if (parent === p || !fs4.statSync(parent, { throwIfNoEntry: false })?.isDirectory()) return void 0;
+  return revealCommand(parent, false, platform, env);
+}
+function revealCommand(target, isFile, platform = process.platform, env = process.env) {
+  if (platform === "win32") {
+    const p = path4.win32.normalize(target);
+    if (p.includes('"')) return void 0;
+    const explorer = path4.win32.join(systemRoot(env), "explorer.exe");
+    return { file: explorer, args: [isFile ? `/select,"${p}"` : `"${p}"`], verbatim: true };
   }
-  const wss = new import_websocket_server.default({ noServer: true, maxPayload: 64 * 1024, handleProtocols: () => WS_PROTOCOL });
-  const allowedOrigins = /* @__PURE__ */ new Set([`http://127.0.0.1:${opts.port}`, ...opts.devOrigins ?? []]);
-  const refuse = (socket, code, text) => {
-    stats.rejected++;
-    socket.end(`HTTP/1.1 ${code} ${text}\r
-Connection: close\r
-Content-Length: 0\r
-\r
-`);
-  };
-  server.on("upgrade", (req, socket, head) => {
-    let pathname;
-    try {
-      pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
-    } catch {
-      return refuse(socket, 400, "Bad Request");
-    }
-    if (pathname !== "/pty" || !opts.terminal) return refuse(socket, 404, "Not Found");
-    if (!hostAllowed(req, opts.port)) return refuse(socket, 421, "Misdirected Request");
-    if (!allowedOrigins.has(String(req.headers.origin ?? ""))) return refuse(socket, 403, "Forbidden");
-    if (!tokenMatches(protocolToken(req.headers["sec-websocket-protocol"]), opts.token)) return refuse(socket, 403, "Forbidden");
-    wss.handleUpgrade(req, socket, head, (ws) => attachTerminal(ws, opts.terminal));
-  });
-  return {
-    server,
-    store,
-    broadcaster,
-    stats,
-    close: (reason) => new Promise((resolve) => {
-      reorder.flush();
-      broadcaster.close(reason);
-      opts.terminal?.stop();
-      for (const c of wss.clients) c.terminate();
-      server.close(() => resolve());
-      server.closeAllConnections?.();
-    })
-  };
+  if (platform === "darwin") return { file: "/usr/bin/open", args: isFile ? ["-R", target] : [target] };
+  const opener = findOnPath("xdg-open", env.PATH);
+  return opener ? { file: opener, args: [isFile ? path4.dirname(target) : target] } : void 0;
 }
-function header(req, name) {
-  const v = req.headers[name];
-  return Array.isArray(v) ? v[0] : v;
-}
-function attachTerminal(ws, term) {
-  const out = (m) => {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m));
-  };
-  out({ t: "state", state: term.state });
-  const back = term.scrollback();
-  if (back) out({ t: "out", d: back });
-  const off = term.subscribe(out);
-  ws.on("message", (raw) => {
+function findOnPath(name, pathValue, delimiter = path4.delimiter) {
+  for (const raw of (pathValue ?? "").split(delimiter)) {
+    const dir = raw.replace(/^"|"$/g, "");
+    if (!dir || dir === "." || !path4.isAbsolute(dir)) continue;
+    const f = path4.join(dir, name);
     try {
-      const m = JSON.parse(String(raw));
-      if (!m || typeof m !== "object") return;
-      if (m.t === "in" && typeof m.d === "string") term.write(m.d);
-      else if (m.t === "resize") term.resize(m.cols, m.rows);
-      else if (m.t === "start") {
-        const err = m.mode === void 0 || isStartMode(m.mode) ? term.start(typeof m.cwd === "string" && m.cwd ? m.cwd : void 0, m.mode) : "unknown start mode";
-        if (err) out({ t: "state", state: { ...term.state, reason: err } });
-      } else if (m.t === "stop") term.stop();
+      if (!fs4.statSync(f).isFile()) continue;
+      fs4.accessSync(f, fs4.constants.X_OK);
+      return f;
     } catch {
     }
-  });
-  ws.on("error", () => ws.terminate());
-  ws.on("close", off);
+  }
+  return void 0;
+}
+function revealInFolder(p, platform = process.platform, env = process.env) {
+  if (!isLocalAbsolute(p, platform)) return false;
+  const spec = revealTarget(p, platform, env);
+  if (!spec) return false;
+  try {
+    const child = spawn(spec.file, spec.args, { detached: true, stdio: "ignore", windowsVerbatimArguments: spec.verbatim });
+    child.on("error", () => {
+    });
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-// packages/event-bridge/src/runtime-file.ts
-import fs5 from "node:fs";
-import os from "node:os";
-import path5 from "node:path";
-function runtimeDir(env = process.env, platform = process.platform) {
-  if (env.ONECARAT_OFFICE_RUNTIME_DIR) return env.ONECARAT_OFFICE_RUNTIME_DIR;
-  const home = os.homedir();
-  if (platform === "win32") return path5.join(env.LOCALAPPDATA || path5.join(home, "AppData", "Local"), "onecarat-agent-office");
-  if (platform === "darwin") return path5.join(home, "Library", "Application Support", "onecarat-agent-office");
-  return path5.join(env.XDG_STATE_HOME || path5.join(home, ".local", "state"), "onecarat-agent-office");
-}
-function runtimeFilePath(env, platform) {
-  return path5.join(runtimeDir(env, platform), "bridge.json");
-}
-function writeRuntimeFile(info, file = runtimeFilePath()) {
-  fs5.mkdirSync(path5.dirname(file), { recursive: true, mode: 448 });
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs5.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
-  fs5.renameSync(tmp, file);
-}
-function readRuntimeFile(file = runtimeFilePath()) {
-  try {
-    const v = JSON.parse(fs5.readFileSync(file, "utf8"));
-    return typeof v.port === "number" && typeof v.token === "string" ? v : void 0;
-  } catch {
-    return void 0;
-  }
-}
-function removeRuntimeFile(pid, file = runtimeFilePath()) {
-  const cur = readRuntimeFile(file);
-  if (cur && cur.pid !== pid) return;
-  try {
-    fs5.unlinkSync(file);
-  } catch {
-  }
-}
+// packages/event-bridge/src/research.ts
+import crypto4 from "node:crypto";
+import fs7 from "node:fs";
+import path7 from "node:path";
 
 // packages/event-bridge/src/terminal.ts
 import crypto3 from "node:crypto";
-import fs6 from "node:fs";
+import fs5 from "node:fs";
 import { createRequire } from "node:module";
-import path6 from "node:path";
+import path5 from "node:path";
 
 // packages/event-bridge/src/child-env.ts
 var DROP_EXACT = /* @__PURE__ */ new Set(["CLAUDECODE", "AI_AGENT", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PROJECT_DIR", "CLAUDE_ENV_FILE"]);
@@ -4670,8 +4516,8 @@ function loadPty(candidates) {
   const plat = `${process.platform}-${process.arch}`;
   const reasons = [];
   for (const dir of candidates) {
-    if (!fs6.existsSync(path6.join(dir, "package.json"))) continue;
-    const hasNative = fs6.existsSync(path6.join(dir, "prebuilds", plat)) || fs6.existsSync(path6.join(dir, "build", "Release"));
+    if (!fs5.existsSync(path5.join(dir, "package.json"))) continue;
+    const hasNative = fs5.existsSync(path5.join(dir, "prebuilds", plat)) || fs5.existsSync(path5.join(dir, "build", "Release"));
     if (!hasNative) {
       reasons.push(`no node-pty binary for ${plat}`);
       continue;
@@ -4685,6 +4531,9 @@ function loadPty(candidates) {
     }
   }
   return { ok: false, reason: reasons[0] ?? "node-pty is not bundled" };
+}
+function oneLine(text) {
+  return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/ {2,}/g, " ").trim();
 }
 var Terminal = class {
   opts;
@@ -4742,7 +4591,7 @@ var Terminal = class {
     if (cwd !== void 0 && !isLocalAbsolute(cwd)) return "not a local folder";
     const dir = cwd ?? this.st.cwd;
     try {
-      if (!fs6.statSync(dir).isDirectory()) return "not a folder";
+      if (!fs5.statSync(dir).isDirectory()) return "not a folder";
     } catch {
       return "folder not found";
     }
@@ -4798,6 +4647,20 @@ var Terminal = class {
   write(d) {
     this.proc?.write(d);
   }
+  /**
+   * Research Lab only: the one text Office ever writes to this terminal by itself. Called once per "Start
+   * research" the user pressed. The command is pasted as one line into the input box; NOTHING is sent: Enter is
+   * always the user's. Every control character is removed first (also the ones that would end the paste), so the
+   * text cannot act as a key press.
+   */
+  pasteLine(text) {
+    const p = this.proc;
+    if (!p) return false;
+    const line = oneLine(text);
+    if (!line) return false;
+    p.write(`\x1B[200~${line}\x1B[201~`);
+    return true;
+  }
   resize(cols, rows) {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 10 || rows < 4 || cols > 500 || rows > 200) return;
     this.cols = cols;
@@ -4846,17 +4709,926 @@ function whenTerminalEnds(term, delayMs, onEnd) {
   };
 }
 
+// packages/event-bridge/src/research-result.ts
+import fs6 from "node:fs";
+import path6 from "node:path";
+var RESEARCH_DIR = "research";
+var RESEARCH_ID_RE = /^r-\d{8}-\d{6}-[0-9a-f]{4}$/;
+var MAX_RESULT_BYTES = 256 * 1024;
+var MAX_RESULT_FILES = 60;
+var MAX_PAST_RUNS = 20;
+var REQUEST_FILE = "request.json";
+var SUMMARY_FILE = "summary.json";
+var REVIEW_FILE_RE = /^review-([A-Za-z0-9][A-Za-z0-9._-]{0,63})\.json$/;
+var RESEARCHER_AGENT_TYPE = "onecarat-agent-office:researcher";
+function researchFileKind(name) {
+  if (!RESULT_FILE_RE.test(name)) return void 0;
+  if (name === REQUEST_FILE) return "request";
+  if (name === SUMMARY_FILE) return "summary";
+  return REVIEW_FILE_RE.test(name) ? "review" : "result";
+}
+var RESULT_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.json$/;
+var str = (v, max) => typeof v === "string" ? clean(v).slice(0, max) : "";
+function clean(s) {
+  return s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").trim();
+}
+var list = (v, maxItems, maxLen) => Array.isArray(v) ? v.filter((x) => typeof x === "string").map((x) => clean(x).slice(0, maxLen)).filter(Boolean).slice(0, maxItems) : [];
+function isRealDir(p) {
+  try {
+    const st = fs6.lstatSync(p);
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+function readJsonFile(file) {
+  let st;
+  try {
+    st = fs6.lstatSync(file);
+  } catch {
+    return { reason: "unreadable" };
+  }
+  if (!st.isFile() || st.isSymbolicLink()) return { reason: "not-a-regular-file" };
+  if (st.size > MAX_RESULT_BYTES) return { reason: "too-large" };
+  let text;
+  try {
+    text = fs6.readFileSync(file, "utf8").replace(/^﻿/, "");
+  } catch {
+    return { reason: "unreadable" };
+  }
+  try {
+    return { value: JSON.parse(text) };
+  } catch {
+    return { reason: "invalid-json" };
+  }
+}
+function validateResult(value, researchId, file, engine, at) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "not-an-object";
+  const o = value;
+  if (o.researchId !== void 0 && o.researchId !== researchId) return "wrong-research-id";
+  const title = str(o.title, 200);
+  if (!title) return "no-title";
+  const rawId = typeof o.id === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(o.id) ? o.id : file.replace(/\.json$/i, "");
+  const sources = Array.isArray(o.sources) ? o.sources.map((s) => {
+    if (typeof s === "string") return { title: "", url: str(s, 2e3) };
+    if (!s || typeof s !== "object") return void 0;
+    const r = s;
+    return { title: str(r.title, 300), url: str(r.url, 2e3) };
+  }).filter((s) => !!s && (!!s.url || !!s.title)).slice(0, 50) : [];
+  const status = o.status === "partial" || o.status === "failed" ? o.status : "completed";
+  return { id: rawId, file, title, summary: str(o.summary, 1e3), details: str(o.details, 2e4), findings: list(o.findings, 30, 1e3), sources, caveats: list(o.caveats, 20, 1e3), status, engine, at };
+}
+function loadResult(runDir, name, researchId, engine) {
+  if (researchFileKind(name) !== "result") return void 0;
+  const file = path6.join(runDir, name);
+  const r = readJsonFile(file);
+  if ("reason" in r) return { error: { file: name, reason: r.reason } };
+  let at = Date.now();
+  try {
+    at = fs6.lstatSync(file).mtimeMs;
+  } catch {
+  }
+  const card = validateResult(r.value, researchId, name, engine, at);
+  return typeof card === "string" ? { error: { file: name, reason: card } } : { card };
+}
+function loadRequest(runDir) {
+  const r = readJsonFile(path6.join(runDir, REQUEST_FILE));
+  if ("reason" in r || !r.value || typeof r.value !== "object" || Array.isArray(r.value)) return {};
+  const o = r.value;
+  const n = Number(o.requestedCount);
+  const p = Number(o.researchers);
+  return { theme: str(o.theme, 500) || void 0, requestedCount: Number.isInteger(n) && n > 0 && n <= 100 ? n : void 0, researchers: Number.isInteger(p) && p > 0 && p <= 10 ? p : void 0, at: mtime(path6.join(runDir, REQUEST_FILE)) };
+}
+function mtime(file) {
+  try {
+    return fs6.lstatSync(file).mtimeMs;
+  } catch {
+    return void 0;
+  }
+}
+var count = (v) => Number.isInteger(v) && v >= 0 && v <= 1e3 ? v : void 0;
+function loadReview(runDir, name, researchId) {
+  if (researchFileKind(name) !== "review") return void 0;
+  const file = path6.join(runDir, name);
+  const r = readJsonFile(file);
+  if ("reason" in r) return { error: { file: name, reason: r.reason } };
+  if (!r.value || typeof r.value !== "object" || Array.isArray(r.value)) return { error: { file: name, reason: "not-an-object" } };
+  const o = r.value;
+  if (o.researchId !== void 0 && o.researchId !== researchId) return { error: { file: name, reason: "wrong-research-id" } };
+  if (o.verdict !== "confirmed" && o.verdict !== "needs-check") return { error: { file: name, reason: "bad-verdict" } };
+  const fromName = REVIEW_FILE_RE.exec(name)[1];
+  const resultId = typeof o.resultId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(o.resultId) ? o.resultId : fromName;
+  return { review: { resultId, file: name, verdict: o.verdict, note: str(o.note, 1e3), at: mtime(file) ?? Date.now() } };
+}
+function loadSummary(runDir, researchId) {
+  const file = path6.join(runDir, SUMMARY_FILE);
+  if (!fs6.existsSync(file)) return void 0;
+  const r = readJsonFile(file);
+  if ("reason" in r) return { error: { file: SUMMARY_FILE, reason: r.reason } };
+  if (!r.value || typeof r.value !== "object" || Array.isArray(r.value)) return { error: { file: SUMMARY_FILE, reason: "not-an-object" } };
+  const o = r.value;
+  if (o.researchId !== void 0 && o.researchId !== researchId) return { error: { file: SUMMARY_FILE, reason: "wrong-research-id" } };
+  return { summary: { saved: count(o.saved), missing: count(o.missing), reason: str(o.reason, 1e3), at: mtime(file) ?? Date.now() } };
+}
+function compareResultNames(a, b) {
+  return a.localeCompare(b, "en", { numeric: true }) || (a < b ? -1 : a > b ? 1 : 0);
+}
+function scanRun(root, researchId, engine) {
+  const out = { cards: [], errors: [], reviews: [] };
+  const runDir = path6.join(root, researchId);
+  if (!RESEARCH_ID_RE.test(researchId) || !isRealDir(root) || !isRealDir(runDir)) return out;
+  let names;
+  try {
+    names = fs6.readdirSync(runDir).sort(compareResultNames);
+  } catch {
+    return out;
+  }
+  let n = 0;
+  let v = 0;
+  for (const name of names) {
+    const kind = researchFileKind(name);
+    if (kind === "result" && n < MAX_RESULT_FILES) {
+      const r = loadResult(runDir, name, researchId, engine);
+      if (!r) continue;
+      n++;
+      if ("card" in r) out.cards.push(r.card);
+      else out.errors.push(r.error);
+    } else if (kind === "review" && v < MAX_RESULT_FILES) {
+      const r = loadReview(runDir, name, researchId);
+      if (!r) continue;
+      v++;
+      if ("review" in r) out.reviews.push(r.review);
+      else out.errors.push(r.error);
+    }
+  }
+  const s = loadSummary(runDir, researchId);
+  if (s && "summary" in s) out.summary = s.summary;
+  else if (s) out.errors.push(s.error);
+  return out;
+}
+function listRunIds(root) {
+  if (!isRealDir(root)) return [];
+  try {
+    return fs6.readdirSync(root).filter((n) => RESEARCH_ID_RE.test(n) && isRealDir(path6.join(root, n))).sort().reverse().slice(0, MAX_PAST_RUNS);
+  } catch {
+    return [];
+  }
+}
+function researchFileIn(root, file) {
+  const a = path6.resolve(file);
+  const fold2 = (p) => process.platform === "win32" ? p.toLowerCase() : p;
+  const runDir = path6.dirname(a);
+  if (fold2(path6.dirname(runDir)) !== fold2(path6.resolve(root))) return void 0;
+  const id = path6.basename(runDir);
+  const name = path6.basename(a);
+  return RESEARCH_ID_RE.test(id) && RESULT_FILE_RE.test(name) ? { id, name } : void 0;
+}
+function insideGit(cwd) {
+  for (let d = path6.resolve(cwd); ; d = path6.dirname(d)) {
+    if (fs6.existsSync(path6.join(d, ".git"))) return true;
+    if (path6.dirname(d) === d) return false;
+  }
+}
+
+// packages/event-bridge/src/research.ts
+var RESEARCH_COUNTS = [3, 5, 10, 20];
+var RESEARCH_MAX_COUNT = 20;
+var RESEARCHER_COUNTS = [1, 2, 3];
+var RESEARCH_COMMAND = "/onecarat-agent-office:research";
+var THEME_MAX = 500;
+function officeTerminal(term) {
+  return { state: () => term.state, paste: (line) => term.pasteLine(line) };
+}
+var researchRoot = (cwd) => path7.join(cwd, RESEARCH_DIR);
+var fold = (p) => process.platform === "win32" ? path7.resolve(p).toLowerCase() : path7.resolve(p);
+var samePath = (a, b) => fold(a) === fold(b);
+function newResearchId(now, exists) {
+  const d = new Date(now);
+  const p = (n, w = 2) => String(n).padStart(w, "0");
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  for (; ; ) {
+    const id = `r-${stamp}-${crypto4.randomBytes(2).toString("hex")}`;
+    if (!exists(id)) return id;
+  }
+}
+function cleanTheme(v) {
+  return typeof v === "string" ? oneLine(v).slice(0, THEME_MAX).trim() : "";
+}
+function researchCommand(req) {
+  return oneLine(`${RESEARCH_COMMAND} ${req.count} ${req.researchers} ${req.id} ${req.theme}`);
+}
+var ANSWERED_AFTER_MS = 3e3;
+var waitOf = (t) => ({ agentId: t.agentId, toolName: t.toolName, detail: t.detail, at: t.at ?? 0 });
+var MAX_SESSIONS = 50;
+var MAX_OPEN = 300;
+var MAX_LIVE_RUNS = 20;
+var ENDED = ["completed", "failed", "stopped"];
+var ResearchController = class {
+  o;
+  off;
+  /** Researches followed live since this Office started, oldest first. */
+  runs = /* @__PURE__ */ new Map();
+  reviews = /* @__PURE__ */ new Map();
+  currentId;
+  past;
+  pastKey = "";
+  sessions = /* @__PURE__ */ new Map();
+  seq = 0;
+  constructor(opts) {
+    this.o = { now: Date.now, ...opts };
+    this.off = opts.store.subscribe((batch) => {
+      for (const ev of batch) this.onEvent(ev);
+    });
+  }
+  dispose() {
+    this.off();
+  }
+  term() {
+    return this.o.terminal?.state() ?? { available: false, running: false, cwd: this.o.cwd ?? process.cwd() };
+  }
+  sess(id) {
+    let s = this.sessions.get(id);
+    if (!s) {
+      s = { started: false, open: /* @__PURE__ */ new Map(), pending: /* @__PURE__ */ new Map() };
+      this.sessions.set(id, s);
+      if (this.sessions.size > MAX_SESSIONS) this.sessions.delete(this.sessions.keys().next().value);
+    }
+    return s;
+  }
+  runOfAgent(sessionId, agentId) {
+    for (const run of this.runs.values()) {
+      if (run.sessionId !== sessionId) continue;
+      const r = run.researchers.find((x) => x.agentId === agentId);
+      if (r) return { run, r };
+    }
+    return void 0;
+  }
+  /** The research a new researcher of this session belongs to: the newest one that is under way there. */
+  runOfSession(sessionId) {
+    const mine = [...this.runs.values()].filter((r) => r.sessionId === sessionId && r.status !== "dismissed" && r.status !== "awaiting-enter");
+    return mine.reverse().find((r) => r.status === "researching") ?? mine[0];
+  }
+  onEvent(ev) {
+    const s = this.sess(ev.sessionId);
+    if (ev.type === "session.ended") {
+      s.started = false;
+      s.open.clear();
+      s.pending.clear();
+      for (const run of this.runs.values()) if (run.sessionId === ev.sessionId && run.status === "researching") this.unconfirmed(run, ev.at);
+      return;
+    }
+    if (ev.type === "wait.dismissed") {
+      for (const t of s.pending.values()) if (t.agentId === ev.agentId) t.hidden = true;
+      return;
+    }
+    s.started = true;
+    if (!ev.agentId && ev.permissionMode) s.mode = ev.permissionMode;
+    if (ev.agentId && ev.type === "tool.started") {
+      const hit = this.runOfAgent(ev.sessionId, ev.agentId);
+      if (hit && hit.r.status !== "working") this.working(hit.run, hit.r, ev.at);
+    }
+    switch (ev.type) {
+      case "session.started":
+        s.open.clear();
+        s.pending.clear();
+        break;
+      case "user.prompt":
+        for (const [k, t] of s.pending) if (!t.agentId) s.pending.delete(k);
+        for (const [k, t] of s.open) if (!t.agentId) s.open.delete(k);
+        this.onPrompt(ev.sessionId, ev.text, ev.at);
+        break;
+      case "tool.started":
+        for (const [k, t] of s.pending) if (t.agentId === ev.agentId && k !== ev.toolUseId && (t.at ?? 0) < ev.at - ANSWERED_AFTER_MS) s.pending.delete(k);
+        if (ev.toolUseId) {
+          s.open.set(ev.toolUseId, { agentId: ev.agentId, toolName: ev.toolName, detail: ev.detail });
+          if (s.open.size > MAX_OPEN) s.open.delete(s.open.keys().next().value);
+        }
+        break;
+      case "permission.requested": {
+        const mine = [...s.open].reverse().filter(([id, t]) => t.agentId === ev.agentId && t.toolName === ev.toolName && !s.pending.has(id));
+        const hit = mine.find(([, t]) => t.detail === ev.detail) ?? mine[0];
+        s.pending.set(hit ? hit[0] : `?${++this.seq}`, { agentId: ev.agentId, toolName: ev.toolName, detail: ev.detail, at: ev.at });
+        break;
+      }
+      case "tool.finished":
+      case "tool.failed": {
+        const id = ev.toolUseId;
+        if (id) s.open.delete(id);
+        if (id && s.pending.delete(id)) break;
+        for (const [k, t] of s.pending) {
+          if (k.startsWith("?") && t.agentId === ev.agentId && t.toolName === ev.toolName) {
+            s.pending.delete(k);
+            break;
+          }
+        }
+        break;
+      }
+      case "file.created": {
+        const p = ev.path ?? (ev.fileId ? this.o.filePath?.(ev.fileId) : void 0);
+        if (p) this.take(p, ev);
+        break;
+      }
+      case "subagent.started":
+        if (ev.agentType === RESEARCHER_AGENT_TYPE) this.researcherStarted(ev.sessionId, ev.childId, ev.at);
+        break;
+      case "injected.prompt":
+        if (ev.fromAgentId) this.researcherHeard(ev.sessionId, ev.fromAgentId, ev.kind, ev.taskStatus, ev.at);
+        break;
+      case "notification":
+        if (!ev.agentId && ev.kind === "idle_prompt") {
+          for (const [k, t] of s.pending) if (!t.agentId) s.pending.delete(k);
+          for (const [k, t] of s.open) if (!t.agentId) s.open.delete(k);
+          this.onTurnEnd(ev.sessionId, void 0, ev.at);
+        }
+        break;
+      case "turn.stopped":
+        if (!ev.agentId) {
+          for (const [k, t] of s.pending) if (!t.agentId) s.pending.delete(k);
+          for (const [k, t] of s.open) if (!t.agentId) s.open.delete(k);
+          this.onTurnEnd(ev.sessionId, ev.backgroundTasks, ev.at);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  /** A turn began. Is it the research command of a research that was waiting for Enter? */
+  onPrompt(sessionId, text, at) {
+    const isCommand = text.trimStart().startsWith(RESEARCH_COMMAND);
+    for (const run of this.runs.values()) {
+      if (run.status !== "awaiting-enter") continue;
+      if (isCommand && text.includes(run.id)) {
+        run.status = "researching";
+        run.sessionId = sessionId;
+        run.startedAt = at;
+      } else if (run.pasted && sessionId === run.sessionId) {
+        run.status = "dismissed";
+        run.endedAt = at;
+      }
+    }
+  }
+  researcherStarted(sessionId, agentId, at) {
+    const known = this.runOfAgent(sessionId, agentId);
+    if (known) return this.working(known.run, known.r, at);
+    const run = this.runOfSession(sessionId);
+    if (!run) return;
+    run.researchers.push({ agentId, n: run.researchers.length + 1, status: "working", startedAt: at, updatedAt: at, cards: 0 });
+    if (run.status === "unconfirmed") this.resume(run);
+  }
+  working(run, r, at) {
+    r.status = "working";
+    r.updatedAt = at;
+    if (run.status === "unconfirmed") this.resume(run);
+  }
+  /** New evidence of work after "end not confirmed": the research is under way again. */
+  resume(run) {
+    run.status = "researching";
+    run.endedAt = void 0;
+  }
+  /** The manager received something from an agent: a report (agent-message) or Claude Code's completion notice. */
+  researcherHeard(sessionId, agentId, kind, taskStatus, at) {
+    const hit = this.runOfAgent(sessionId, agentId);
+    if (!hit) return;
+    const r = hit.r;
+    if (kind === "task-notification" && taskStatus) {
+      r.status = taskStatus === "completed" ? "completed" : taskStatus === "failed" ? "failed" : "stopped";
+      r.updatedAt = at;
+      this.dropWaiting(sessionId, agentId);
+    } else if ((kind === "agent-message" || kind === "task-notification") && r.status === "working") {
+      r.status = "reported";
+      r.updatedAt = at;
+    }
+  }
+  dropWaiting(sessionId, agentId) {
+    const s = this.sess(sessionId);
+    for (const [k, t] of s.pending) if (t.agentId === agentId) s.pending.delete(k);
+    for (const [k, t] of s.open) if (t.agentId === agentId) s.open.delete(k);
+  }
+  /** The manager's turn ended. `tasks`: what Claude Code says is still running in the background (may be absent). */
+  onTurnEnd(sessionId, tasks, at) {
+    for (const run of this.runs.values()) {
+      if (run.sessionId !== sessionId || run.restored) continue;
+      const running = (id) => tasks?.some((t) => t.id === id && t.status === "running") === true;
+      if (tasks) {
+        for (const r of run.researchers) {
+          if (r.status === "reported" && !running(r.agentId)) {
+            r.status = "completed";
+            r.updatedAt = at;
+            this.dropWaiting(sessionId, r.agentId);
+          }
+        }
+      }
+      if (run.status !== "researching") continue;
+      this.rescan(run);
+      if (run.summary) {
+        this.complete(run);
+        continue;
+      }
+      const someoneAtWork = tasks ? run.researchers.some((r) => running(r.agentId)) || tasks.some((t) => t.status === "running" && t.agentType === RESEARCHER_AGENT_TYPE) : run.researchers.some((r) => !ENDED.includes(r.status));
+      if (!someoneAtWork) this.unconfirmed(run, at);
+    }
+  }
+  complete(run) {
+    run.status = "completed";
+    run.endedAt = run.summary?.at;
+  }
+  /** No summary.json and nobody at work: the end is not confirmed. Never shown as completed. */
+  unconfirmed(run, at) {
+    run.status = "unconfirmed";
+    run.endedAt = at;
+  }
+  /**
+   * A file was written: if it belongs to a research of the session that wrote it, read it. The session's working
+   * folder is the cwd on that very hook; without one, or with a path that is not local and absolute (a UNC path
+   * would make this computer contact another machine), nothing is read.
+   */
+  take(file, ev) {
+    if (!isLocalAbsolute(ev.cwd) || !isLocalAbsolute(file)) return;
+    const root = researchRoot(ev.cwd);
+    const where = researchFileIn(root, file);
+    if (!where) return;
+    const kind = researchFileKind(where.name);
+    const dir = path7.join(root, where.id);
+    if (!kind || !isRealDir(root) || !isRealDir(dir)) return;
+    let run = this.runs.get(where.id);
+    if (run && !samePath(run.dir, dir)) {
+      if (run.origin !== "button" || kind !== "request" || run.cards.length) return;
+      run.dir = dir;
+    }
+    if (!run) {
+      this.past = void 0;
+      if (kind !== "request") return;
+      run = this.add({ id: where.id, theme: "", requestedCount: 0, engine: "claude-code", dir, status: "researching", origin: "observed", createdAt: ev.at, sessionId: ev.sessionId, cards: [], errors: [], researchers: [], waiting: [] });
+    }
+    if (run.status === "dismissed") return;
+    run.sessionId ??= ev.sessionId;
+    if (kind === "request") {
+      const req = loadRequest(dir);
+      if (run.origin === "observed") {
+        run.theme = req.theme ?? run.theme;
+        run.requestedCount = req.requestedCount ?? run.requestedCount;
+        run.requestedResearchers = req.researchers ?? run.requestedResearchers;
+      }
+      run.startedAt = req.at ?? run.startedAt ?? ev.at;
+      if (run.status === "awaiting-enter") run.status = "researching";
+    } else if (kind === "result") {
+      const r = loadResult(dir, where.name, run.id, run.engine);
+      if (!r) return;
+      run.errors = run.errors.filter((e) => e.file !== where.name);
+      run.cards = run.cards.filter((c) => c.file !== where.name);
+      if ("card" in r) run.cards.push({ ...r.card, agentId: ev.agentId });
+      else run.errors.push(r.error);
+      run.cards.sort((a, b) => compareResultNames(a.file, b.file));
+    } else if (kind === "review") {
+      const r = loadReview(dir, where.name, run.id);
+      if (!r) return;
+      run.errors = run.errors.filter((e) => e.file !== where.name);
+      if ("review" in r) this.reviewsOf(run.id).set(r.review.file, r.review);
+      else run.errors.push(r.error);
+    } else {
+      const r = loadSummary(dir, run.id);
+      run.errors = run.errors.filter((e) => e.file !== where.name);
+      if (r && "summary" in r) {
+        this.rescan(run);
+        run.summary = r.summary;
+        this.complete(run);
+      } else if (r) run.errors.push(r.error);
+    }
+    if (run.status === "unconfirmed" && kind !== "summary") this.resume(run);
+  }
+  reviewsOf(id) {
+    let m = this.reviews.get(id);
+    if (!m) this.reviews.set(id, m = /* @__PURE__ */ new Map());
+    return m;
+  }
+  /** Everything in the run's folder. Who wrote a card is kept from the hooks (the folder cannot tell). */
+  rescan(run) {
+    const got = scanRun(path7.dirname(run.dir), run.id, run.engine);
+    const by = new Map(run.cards.map((c) => [c.file, c.agentId]));
+    run.cards = got.cards.map((c) => ({ ...c, agentId: by.get(c.file) }));
+    run.errors = got.errors;
+    const m = this.reviewsOf(run.id);
+    m.clear();
+    for (const r of got.reviews) m.set(r.file, r);
+    run.summary = got.summary;
+  }
+  add(run) {
+    this.runs.set(run.id, run);
+    this.currentId = run.id;
+    if (this.runs.size > MAX_LIVE_RUNS) {
+      const old = this.runs.keys().next().value;
+      this.runs.delete(old);
+      this.reviews.delete(old);
+    }
+    return run;
+  }
+  /**
+   * The user pressed "Start research". The command line is pasted into the Office terminal's input box when that
+   * is safe; otherwise it is only returned, for the page to show. Enter is never pressed here.
+   */
+  start(themeIn, countIn, researchersIn = 2) {
+    const theme = cleanTheme(themeIn);
+    if (!theme) return { error: "bad-theme" };
+    const count2 = Number(countIn);
+    if (!Number.isInteger(count2) || count2 < 1 || count2 > RESEARCH_MAX_COUNT) return { error: "bad-count" };
+    const researchers = Number(researchersIn);
+    if (!RESEARCHER_COUNTS.includes(researchers)) return { error: "bad-researchers" };
+    if ([...this.runs.values()].some((r) => r.status === "awaiting-enter" && r.pasted)) return { error: "pending" };
+    const st = this.term();
+    const root = researchRoot(st.cwd);
+    const now = this.o.now();
+    const id = newResearchId(now, (x) => this.runs.has(x) || fs7.existsSync(path7.join(root, x)));
+    const command = researchCommand({ id, theme, count: count2, researchers });
+    const sess = st.sessionId ? this.sessions.get(st.sessionId) : void 0;
+    let notPasted;
+    if (!this.o.terminal || !st.available || !st.running) notPasted = "no-terminal";
+    else if (!sess?.started) notPasted = "not-started";
+    else if (sess.pending.size > 0) notPasted = [...sess.pending.values()].some((t) => !t.hidden) ? "waiting-permission" : "wait-unknown";
+    else if (!this.o.terminal.paste(command)) notPasted = "no-terminal";
+    for (const r of this.runs.values()) if (r.status === "awaiting-enter") r.status = "dismissed";
+    const run = this.add({ id, theme, requestedCount: count2, requestedResearchers: researchers, engine: "claude-code", dir: path7.join(root, id), status: "awaiting-enter", origin: "button", command, pasted: !notPasted, notPasted, createdAt: now, sessionId: notPasted ? void 0 : st.sessionId, cards: [], errors: [], researchers: [], waiting: [] });
+    this.past = void 0;
+    return { run };
+  }
+  /**
+   * Drop a research that has not started. Office takes nothing back out of the terminal: a pasted command stays
+   * in the input box until the user clears it.
+   */
+  dismiss() {
+    const run = this.currentId ? this.runs.get(this.currentId) : void 0;
+    if (run?.status !== "awaiting-enter") return;
+    run.status = "dismissed";
+    run.endedAt = this.o.now();
+  }
+  view(run) {
+    const reviews = [...this.reviews.get(run.id)?.values() ?? []];
+    const cards = run.cards.map((c) => {
+      const rv = reviews.find((r) => r.resultId === c.id) ?? reviews.find((r) => `${r.resultId}.json` === c.file);
+      return rv ? { ...c, review: { verdict: rv.verdict, note: rv.note } } : { ...c };
+    });
+    const researchers = run.researchers.map((r) => ({ ...r, cards: cards.filter((c) => c.agentId === r.agentId).length }));
+    const s = run.sessionId ? this.sessions.get(run.sessionId) : void 0;
+    const mine = new Set(run.researchers.map((r) => r.agentId));
+    const active = run.status === "researching" || run.status === "unconfirmed";
+    const waiting = s && active ? [...s.pending.values()].filter((t) => !t.agentId || mine.has(t.agentId)) : [];
+    return { ...run, cards, errors: [...run.errors], researchers, waiting: waiting.filter((t) => !t.hidden).map(waitOf), unresolved: waiting.length };
+  }
+  /** Where earlier researches are read back from: the Office working folder and the terminal's current folder. */
+  pastRoots() {
+    const out = [];
+    for (const cwd of [this.o.cwd, this.term().cwd]) {
+      if (!isLocalAbsolute(cwd)) continue;
+      const root = researchRoot(cwd);
+      if (!out.some((x) => samePath(x, root))) out.push(root);
+    }
+    return out;
+  }
+  loadPast(root) {
+    return listRunIds(root).map((id) => {
+      const dir = path7.join(root, id);
+      const req = loadRequest(dir);
+      const got = scanRun(root, id, "claude-code");
+      const m = /^r-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-/.exec(id);
+      const named = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+      const cards = got.cards.map((c) => {
+        const rv = got.reviews.find((r) => r.resultId === c.id) ?? got.reviews.find((r) => `${r.resultId}.json` === c.file);
+        return rv ? { ...c, review: { verdict: rv.verdict, note: rv.note } } : c;
+      });
+      return { id, theme: req.theme ?? "", requestedCount: req.requestedCount ?? cards.length, requestedResearchers: req.researchers, engine: "claude-code", dir, status: got.summary ? "completed" : "unconfirmed", origin: "observed", createdAt: req.at ?? named, startedAt: req.at ?? named, endedAt: got.summary?.at, cards, errors: got.errors, researchers: [], summary: got.summary, waiting: [], restored: true };
+    });
+  }
+  info(refresh = false) {
+    const st = this.term();
+    const roots = this.pastRoots();
+    if (!this.past || this.pastKey !== roots.join("|") || refresh) {
+      const seen = /* @__PURE__ */ new Set();
+      this.past = roots.flatMap((r) => this.loadPast(r)).filter((p) => !seen.has(p.id) && !!seen.add(p.id)).sort((a, b) => a.id < b.id ? 1 : -1).slice(0, MAX_PAST_RUNS);
+      this.pastKey = roots.join("|");
+    }
+    const elsewhere = [...this.runs.values()].filter((r) => r.startedAt !== void 0 && r.status !== "dismissed" && !this.past.some((p) => p.id === r.id));
+    const cur = this.currentId ? this.runs.get(this.currentId) : void 0;
+    const sess = st.sessionId ? this.sessions.get(st.sessionId) : void 0;
+    return {
+      cwd: st.cwd,
+      root: researchRoot(st.cwd),
+      inGit: insideGit(st.cwd),
+      counts: RESEARCH_COUNTS,
+      defaultCount: 5,
+      researcherCounts: RESEARCHER_COUNTS,
+      defaultResearchers: 2,
+      command: RESEARCH_COMMAND,
+      researcherType: RESEARCHER_AGENT_TYPE,
+      terminal: { available: st.available, running: st.running, sessionId: st.sessionId, started: st.running && sess?.started === true, waiting: (sess?.pending.size ?? 0) > 0, waits: [...sess?.pending.values() ?? []].filter((t) => !t.hidden).map(waitOf), unresolved: sess?.pending.size ?? 0, permissionMode: sess?.mode },
+      current: cur && cur.status !== "dismissed" ? this.view(cur) : void 0,
+      // A research followed live keeps what only the hooks know (who wrote which card, who is still at work).
+      past: [...elsewhere, ...this.past].filter((p) => p.id !== cur?.id).sort((a, b) => a.id < b.id ? 1 : -1).map((p) => {
+        const live = this.runs.get(p.id);
+        return live ? this.view(live) : p;
+      })
+    };
+  }
+};
+
+// packages/event-bridge/src/server.ts
+var MIME = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".json": "application/json; charset=utf-8",
+  ".ico": "image/x-icon"
+};
+function createBridge(opts) {
+  const store = new EventStore();
+  const broadcaster = new Broadcaster(store);
+  const reorder = new ReorderBuffer(opts.reorderWindowMs ?? 300, (b) => store.append(b));
+  const stats = { received: 0, rejected: 0 };
+  let userSeq = 0;
+  const uiRoot = opts.uiDir ? path8.resolve(opts.uiDir) : void 0;
+  const files = /* @__PURE__ */ new Map();
+  const MAX_FILES = 5e3;
+  const hidePath = (e) => {
+    if (e.type !== "file.created" || !e.path) return e;
+    const fileId = crypto5.createHmac("sha256", opts.token).update(e.path).digest("hex").slice(0, 24);
+    files.delete(fileId);
+    files.set(fileId, e.path);
+    if (files.size > MAX_FILES) files.delete(files.keys().next().value);
+    const { path: _full, ...rest } = e;
+    return { ...rest, fileId };
+  };
+  const research = opts.terminal || opts.research ? new ResearchController({ ...opts.research, cwd: opts.research?.cwd ?? opts.terminal?.state.cwd, terminal: opts.terminal ? officeTerminal(opts.terminal) : void 0, store, filePath: (id) => files.get(id) }) : void 0;
+  const readJson2 = async (req) => {
+    try {
+      const v = JSON.parse((await readBody(req, 16 * 1024)).toString("utf8"));
+      return v && typeof v === "object" && !Array.isArray(v) ? v : void 0;
+    } catch {
+      return void 0;
+    }
+  };
+  const send = (res, code, body, type = "application/json; charset=utf-8", extra = {}) => {
+    res.writeHead(code, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
+    res.end(body);
+  };
+  const server = http2.createServer((req, res) => {
+    handle(req, res).catch((e) => {
+      stats.rejected++;
+      if (!res.headersSent) send(res, e instanceof URIError ? 400 : 500, "{}");
+      else res.destroy();
+    });
+  });
+  async function handle(req, res) {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (!hostAllowed(req, opts.port)) {
+      stats.rejected++;
+      return send(res, 421, '{"error":"host not allowed"}');
+    }
+    if (url.pathname === "/hook") {
+      if (req.method !== "POST") return send(res, 405, "{}");
+      if (looksLikeBrowser(req) || !tokenMatches(req.headers["x-office-token"], opts.token)) {
+        stats.rejected++;
+        req.resume();
+        return send(res, 403, "{}");
+      }
+      if (!(req.headers["content-type"] ?? "").startsWith("application/json")) {
+        stats.rejected++;
+        req.resume();
+        return send(res, 415, "{}");
+      }
+      try {
+        const body = await readBody(req);
+        send(res, 200, "{}");
+        stats.received++;
+        const events = eventsFromHookBody(body, header(req, "x-office-hook-time")).map(hidePath);
+        const run = header(req, "x-office-terminal");
+        if (run) {
+          for (const e of events) if (e.type === "session.started") opts.terminal?.adoptSession(run, e.sessionId);
+        }
+        reorder.push(events);
+      } catch (e) {
+        stats.rejected++;
+        if (!res.headersSent) send(res, e instanceof BodyTooLarge ? 413 : 400, "{}");
+      }
+      return;
+    }
+    if (crossSite(req, opts.port, opts.devOrigins)) {
+      stats.rejected++;
+      return send(res, 403, '{"error":"cross-site"}');
+    }
+    const authed = tokenMatches(req.headers["x-office-token"], opts.token);
+    if (url.pathname === "/api/health" && req.method === "GET") {
+      const nonce = header(req, "x-office-nonce");
+      const base2 = { ok: true, app: "onecarat-agent-office", version: opts.version, authed, ...nonce && NONCE_RE.test(nonce) ? { proof: healthProof(opts.token, nonce) } : {} };
+      if (!authed) return send(res, 200, JSON.stringify(base2));
+      const terminal2 = opts.terminal?.state ?? { available: false, reason: "disabled", running: false };
+      return send(res, 200, JSON.stringify({ ...base2, events: store.size, clients: broadcaster.count, received: stats.received, terminal: terminal2 }));
+    }
+    if (url.pathname.startsWith("/api/") || url.pathname === "/events") {
+      if (!authed) {
+        stats.rejected++;
+        return send(res, 401, '{"error":"token required"}');
+      }
+    }
+    if (url.pathname === "/events" && req.method === "GET") {
+      broadcaster.attach(res, SECURITY_HEADERS);
+      return;
+    }
+    if (url.pathname === "/api/clear" && req.method === "POST") {
+      store.clear();
+      files.clear();
+      broadcaster.reset();
+      opts.terminal?.clearScrollback();
+      return send(res, 200, "{}");
+    }
+    if (url.pathname === "/api/waits/dismiss" && req.method === "POST") {
+      const body = await readJson2(req);
+      const sessionId = body?.sessionId;
+      const agentId = body?.agentId;
+      const idOk = (v) => typeof v === "string" && v.length > 0 && v.length <= 200;
+      if (!idOk(sessionId) || agentId !== void 0 && !idOk(agentId)) return send(res, 400, '{"error":"bad request"}');
+      if (!store.snapshot().some((e) => e.sessionId === sessionId)) return send(res, 404, "{}");
+      reorder.flush();
+      store.append([{ id: `${Date.now()}.${++userSeq}`, at: Date.now(), sessionId, source: "live", agentId, type: "wait.dismissed" }]);
+      return send(res, 200, research ? JSON.stringify(research.info()) : "{}");
+    }
+    if (url.pathname === "/api/research" && req.method === "GET") {
+      if (!research) return send(res, 404, "{}");
+      return send(res, 200, JSON.stringify(research.info(url.searchParams.get("refresh") === "1")));
+    }
+    if (url.pathname === "/api/research/start" && req.method === "POST") {
+      if (!research) return send(res, 404, "{}");
+      const body = await readJson2(req);
+      if (!body) return send(res, 400, '{"error":"bad request"}');
+      const r = research.start(body.theme, body.count, body.researchers ?? 2);
+      return "error" in r ? send(res, 409, JSON.stringify(r)) : send(res, 200, JSON.stringify(research.info()));
+    }
+    if (url.pathname === "/api/research/dismiss" && req.method === "POST") {
+      if (!research) return send(res, 404, "{}");
+      research.dismiss();
+      return send(res, 200, JSON.stringify(research.info()));
+    }
+    if (url.pathname === "/api/config" && req.method === "GET") {
+      if (!opts.config) return send(res, 404, "{}");
+      const asked = url.searchParams.get("cwd");
+      let cwd = opts.config.defaultCwd;
+      if (asked) {
+        if (!isLocalDir(asked)) return send(res, 400, '{"error":"bad cwd"}');
+        cwd = asked;
+      }
+      return send(res, 200, JSON.stringify(scanConfig({ cwd, home: opts.config.home, configDir: opts.config.configDir, managedDir: opts.config.managedDir })));
+    }
+    if (url.pathname === "/api/reveal" && req.method === "POST") {
+      const id = (await readJson2(req))?.id;
+      if (id === void 0) return send(res, 400, '{"error":"bad request"}');
+      const file = typeof id === "string" ? files.get(id) : void 0;
+      if (!file) return send(res, 404, '{"error":"unknown file"}');
+      return (opts.reveal ?? revealInFolder)(file) ? send(res, 200, "{}") : send(res, 410, '{"error":"gone"}');
+    }
+    if (url.pathname === "/api/shutdown" && req.method === "POST") {
+      send(res, 200, "{}");
+      opts.onShutdownRequest?.();
+      return;
+    }
+    if ((req.method === "GET" || req.method === "HEAD") && uiRoot) {
+      let rel;
+      try {
+        rel = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
+      } catch {
+        return send(res, 400, "bad path", "text/plain");
+      }
+      if (rel.includes("\0")) return send(res, 400, "bad path", "text/plain");
+      const file = path8.resolve(uiRoot, "." + rel);
+      if (!file.startsWith(uiRoot + path8.sep) && file !== uiRoot) return send(res, 404, "not found", "text/plain");
+      fs8.readFile(file, (err, data) => {
+        if (err) return send(res, 404, "not found", "text/plain");
+        const type = MIME[path8.extname(file).toLowerCase()] ?? "application/octet-stream";
+        const extra = type.startsWith("text/html") ? { "content-security-policy": CSP } : {};
+        if (rel.startsWith("/assets/")) extra["cache-control"] = "public, max-age=31536000, immutable";
+        res.writeHead(200, { ...SECURITY_HEADERS, "content-type": type, "cache-control": "no-store", ...extra });
+        res.end(req.method === "HEAD" ? void 0 : data);
+      });
+      return;
+    }
+    send(res, 404, "{}");
+  }
+  const wss = new import_websocket_server.default({ noServer: true, maxPayload: 64 * 1024, handleProtocols: () => WS_PROTOCOL });
+  const allowedOrigins = /* @__PURE__ */ new Set([`http://127.0.0.1:${opts.port}`, ...opts.devOrigins ?? []]);
+  const refuse = (socket, code, text) => {
+    stats.rejected++;
+    socket.end(`HTTP/1.1 ${code} ${text}\r
+Connection: close\r
+Content-Length: 0\r
+\r
+`);
+  };
+  server.on("upgrade", (req, socket, head) => {
+    let pathname;
+    try {
+      pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname;
+    } catch {
+      return refuse(socket, 400, "Bad Request");
+    }
+    const target = pathname === "/pty" ? opts.terminal : void 0;
+    if (!target) return refuse(socket, 404, "Not Found");
+    if (!hostAllowed(req, opts.port)) return refuse(socket, 421, "Misdirected Request");
+    if (!allowedOrigins.has(String(req.headers.origin ?? ""))) return refuse(socket, 403, "Forbidden");
+    if (!tokenMatches(protocolToken(req.headers["sec-websocket-protocol"]), opts.token)) return refuse(socket, 403, "Forbidden");
+    wss.handleUpgrade(req, socket, head, (ws) => attachTerminal(ws, target));
+  });
+  return {
+    server,
+    store,
+    broadcaster,
+    stats,
+    research,
+    close: (reason) => new Promise((resolve) => {
+      reorder.flush();
+      broadcaster.close(reason);
+      research?.dispose();
+      opts.terminal?.stop();
+      for (const c of wss.clients) c.terminate();
+      server.close(() => resolve());
+      server.closeAllConnections?.();
+    })
+  };
+}
+function header(req, name) {
+  const v = req.headers[name];
+  return Array.isArray(v) ? v[0] : v;
+}
+function attachTerminal(ws, term) {
+  const out = (m) => {
+    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m));
+  };
+  out({ t: "state", state: term.state });
+  const back = term.scrollback();
+  if (back) out({ t: "out", d: back });
+  const off = term.subscribe(out);
+  ws.on("message", (raw) => {
+    try {
+      const m = JSON.parse(String(raw));
+      if (!m || typeof m !== "object") return;
+      if (m.t === "in" && typeof m.d === "string") term.write(m.d);
+      else if (m.t === "resize") term.resize(m.cols, m.rows);
+      else if (m.t === "start") {
+        const err = m.mode === void 0 || isStartMode(m.mode) ? term.start(typeof m.cwd === "string" && m.cwd ? m.cwd : void 0, m.mode) : "unknown start mode";
+        if (err) out({ t: "state", state: { ...term.state, reason: err } });
+      } else if (m.t === "stop") term.stop();
+    } catch {
+    }
+  });
+  ws.on("error", () => ws.terminate());
+  ws.on("close", off);
+}
+
+// packages/event-bridge/src/runtime-file.ts
+import fs9 from "node:fs";
+import os from "node:os";
+import path9 from "node:path";
+function runtimeDir(env = process.env, platform = process.platform) {
+  if (env.ONECARAT_OFFICE_RUNTIME_DIR) return env.ONECARAT_OFFICE_RUNTIME_DIR;
+  const home = os.homedir();
+  if (platform === "win32") return path9.join(env.LOCALAPPDATA || path9.join(home, "AppData", "Local"), "onecarat-agent-office");
+  if (platform === "darwin") return path9.join(home, "Library", "Application Support", "onecarat-agent-office");
+  return path9.join(env.XDG_STATE_HOME || path9.join(home, ".local", "state"), "onecarat-agent-office");
+}
+function runtimeFilePath(env, platform) {
+  return path9.join(runtimeDir(env, platform), "bridge.json");
+}
+function writeRuntimeFile(info, file = runtimeFilePath()) {
+  fs9.mkdirSync(path9.dirname(file), { recursive: true, mode: 448 });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs9.writeFileSync(tmp, JSON.stringify(info), { mode: 384 });
+  fs9.renameSync(tmp, file);
+}
+function readRuntimeFile(file = runtimeFilePath()) {
+  try {
+    const v = JSON.parse(fs9.readFileSync(file, "utf8"));
+    return typeof v.port === "number" && typeof v.token === "string" ? v : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function removeRuntimeFile(pid, file = runtimeFilePath()) {
+  const cur = readRuntimeFile(file);
+  if (cur && cur.pid !== pid) return;
+  try {
+    fs9.unlinkSync(file);
+  } catch {
+  }
+}
+
 // packages/event-bridge/src/open-browser.ts
-import crypto4 from "node:crypto";
-import fs7 from "node:fs";
+import crypto6 from "node:crypto";
+import fs10 from "node:fs";
 import os2 from "node:os";
-import path7 from "node:path";
-import { spawn } from "node:child_process";
+import path10 from "node:path";
+import { spawn as spawn2 } from "node:child_process";
 import { pathToFileURL } from "node:url";
 var HANDOFF_PREFIX = "onecarat-agent-office-open-";
 var HANDOFF_LIFETIME_MS = 2e4;
 function browserCommand(target, platform = process.platform, env = process.env) {
-  if (platform === "win32") return { file: path7.win32.join(systemRoot(env), "System32", "rundll32.exe"), args: ["url.dll,FileProtocolHandler", target] };
+  if (platform === "win32") return { file: path10.win32.join(systemRoot(env), "System32", "rundll32.exe"), args: ["url.dll,FileProtocolHandler", target] };
   if (platform === "darwin") return { file: "/usr/bin/open", args: [target] };
   return { file: "xdg-open", args: [target] };
 }
@@ -4869,20 +5641,20 @@ function handoffDir(platform = process.platform, env = process.env) {
   return platform === "darwin" ? runtimeDir(env, platform) : os2.homedir();
 }
 function writeHandoff(url, dir, startCleaner = true) {
-  fs7.mkdirSync(dir, { recursive: true, mode: 448 });
-  for (const n of fs7.readdirSync(dir)) {
+  fs10.mkdirSync(dir, { recursive: true, mode: 448 });
+  for (const n of fs10.readdirSync(dir)) {
     if (!n.startsWith(HANDOFF_PREFIX) || !n.endsWith(".html")) continue;
     try {
-      const f = path7.join(dir, n);
-      if (Date.now() - fs7.statSync(f).mtimeMs > HANDOFF_LIFETIME_MS) fs7.unlinkSync(f);
+      const f = path10.join(dir, n);
+      if (Date.now() - fs10.statSync(f).mtimeMs > HANDOFF_LIFETIME_MS) fs10.unlinkSync(f);
     } catch {
     }
   }
-  const file = path7.join(dir, `${HANDOFF_PREFIX}${crypto4.randomBytes(8).toString("hex")}.html`);
-  fs7.writeFileSync(file, handoffHtml(url), { mode: 384, flag: "wx" });
+  const file = path10.join(dir, `${HANDOFF_PREFIX}${crypto6.randomBytes(8).toString("hex")}.html`);
+  fs10.writeFileSync(file, handoffHtml(url), { mode: 384, flag: "wx" });
   if (startCleaner) {
     const cleaner = `setTimeout(()=>{try{require('node:fs').unlinkSync(process.argv[1])}catch{}},${HANDOFF_LIFETIME_MS})`;
-    spawn(process.execPath, ["-e", cleaner, file], { detached: true, stdio: "ignore" }).unref();
+    spawn2(process.execPath, ["-e", cleaner, file], { detached: true, stdio: "ignore" }).unref();
   }
   return file;
 }
@@ -4890,7 +5662,7 @@ function openWithKey(url, platform = process.platform, env = process.env) {
   try {
     const target = platform === "win32" ? url : pathToFileURL(writeHandoff(url, handoffDir(platform, env))).href;
     const { file, args: args2 } = browserCommand(target, platform, env);
-    const child = spawn(file, args2, { detached: true, stdio: "ignore" });
+    const child = spawn2(file, args2, { detached: true, stdio: "ignore" });
     child.on("error", () => {
     });
     child.unref();
@@ -4901,7 +5673,7 @@ function openWithKey(url, platform = process.platform, env = process.env) {
 }
 
 // packages/event-bridge/src/main.ts
-var VERSION = "0.2.11";
+var VERSION = "0.3.0";
 var DEFAULT_PORT = 47821;
 var args = process.argv.slice(2);
 var flag = (name) => args.includes(`--${name}`);
@@ -4909,8 +5681,8 @@ var opt = (name) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : void 0;
 };
-var here = path8.dirname(fileURLToPath(import.meta.url));
-var bundled = fs8.existsSync(path8.join(here, "ui", "index.html"));
+var here = path11.dirname(fileURLToPath(import.meta.url));
+var bundled = fs11.existsSync(path11.join(here, "ui", "index.html"));
 var LOOPBACK = /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}\/?$/;
 var devOpt = (name) => bundled ? void 0 : opt(name);
 var devOrigin = devOpt("dev-origin");
@@ -4919,9 +5691,9 @@ if (devOrigin && !LOOPBACK.test(devOrigin)) fail(`--dev-origin must be a loopbac
 if (openBase && !LOOPBACK.test(openBase)) fail(`--open-base must be a loopback URL, got ${openBase}`);
 var port = Number(opt("port") ?? process.env.ONECARAT_OFFICE_PORT ?? DEFAULT_PORT);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) fail(`--port must be between 1024 and 65535, got ${opt("port")}`);
-var uiDir = devOpt("ui-dir") ?? (bundled ? path8.join(here, "ui") : path8.resolve(here, "../../office-ui/dist"));
-var ptyCandidates = [path8.join(here, "vendor", "node-pty"), path8.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")];
-var termCwd = path8.resolve(opt("cwd") ?? process.cwd());
+var uiDir = devOpt("ui-dir") ?? (bundled ? path11.join(here, "ui") : path11.resolve(here, "../../office-ui/dist"));
+var ptyCandidates = [path11.join(here, "vendor", "node-pty"), path11.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")];
+var termCwd = path11.resolve(opt("cwd") ?? process.cwd());
 var devOrigins = devOrigin ? [devOrigin.replace(/\/$/, "")] : [];
 var existing = readRuntimeFile();
 if (existing && existing.pid !== process.pid && isAlive(existing.pid) && (await askOffice(existing.port, existing.token)).ok) {
