@@ -5,7 +5,7 @@ import { createRequire as __officeCreateRequire } from 'node:module'; const requ
 // packages/launcher/src/cli.ts
 import fs5 from "node:fs";
 import http2 from "node:http";
-import path5 from "node:path";
+import path6 from "node:path";
 import { spawn as spawn2 } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -232,11 +232,53 @@ function isDir(d) {
   }
 }
 
+// packages/launcher/src/claude-version.ts
+import { execFileSync } from "node:child_process";
+import path5 from "node:path";
+var RESEARCH_MIN = [2, 1, 198];
+var RESEARCH_CHECKED = { from: [2, 1, 323], to: [2, 1, 325] };
+var versionText = (v) => v.join(".");
+var cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+function parseVersion(out) {
+  if (typeof out !== "string") return void 0;
+  const m = /(?:^|[^\d.])(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?![\d])/.exec(out.slice(0, 400));
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : void 0;
+}
+function researchSupport(v) {
+  if (cmp(v, RESEARCH_MIN) < 0) return "too-old";
+  if (cmp(v, RESEARCH_CHECKED.from) < 0) return "untested";
+  return cmp(v, RESEARCH_CHECKED.to) <= 0 ? "checked" : "newer";
+}
+function readClaudeVersion(file, env, run = execFileSync, platform = process.platform) {
+  if (!file || !path5.isAbsolute(file)) return void 0;
+  if (platform === "win32" && /\.(cmd|bat)$/i.test(file)) return void 0;
+  try {
+    return parseVersion(run(file, ["--version"], { timeout: 5e3, shell: false, windowsHide: true, encoding: "utf8", maxBuffer: 64 * 1024, stdio: ["ignore", "pipe", "ignore"], env }));
+  } catch {
+    return void 0;
+  }
+}
+function researchLines(v, claudeFound) {
+  const facts = [
+    `Research Lab: checked on Claude Code ${versionText(RESEARCH_CHECKED.from)} to ${versionText(RESEARCH_CHECKED.to)}.`,
+    `Research Lab: does not work below ${versionText(RESEARCH_MIN)} (according to the public changelog).`,
+    "Research Lab: versions in between are untested."
+  ];
+  if (!v) return [...facts, claudeFound ? "Claude Code version: could not be read (claude --version gave no version)." : "Claude Code version: not read (claude was not found)."];
+  const where = {
+    "too-old": `too old for the Research Lab (needs ${versionText(RESEARCH_MIN)} or newer). The rest of Office is not affected.`,
+    untested: "Research Lab untested on this version (between the minimum and the checked range).",
+    checked: "Research Lab checked on this version.",
+    newer: "Research Lab untested on this version (newer than the checked range)."
+  };
+  return [...facts, `Claude Code version: ${versionText(v)} \u2014 ${where[researchSupport(v)]}`];
+}
+
 // packages/launcher/src/cli.ts
 var MIN_NODE_MAJOR = 18;
-var here = path5.dirname(fileURLToPath(import.meta.url));
-var bundledBridge = path5.join(here, "bridge.mjs");
-var devBridge = path5.resolve(here, "../../event-bridge/src/main.ts");
+var here = path6.dirname(fileURLToPath(import.meta.url));
+var bundledBridge = path6.join(here, "bridge.mjs");
+var devBridge = path6.resolve(here, "../../event-bridge/src/main.ts");
 var bridgeEntry = fs5.existsSync(bundledBridge) ? bundledBridge : devBridge;
 var parsed = parseLauncherArgs(process.argv.slice(2));
 if ("error" in parsed) {
@@ -355,11 +397,12 @@ function check() {
   console.log(`Node.js ${process.versions.node} (${process.platform}/${process.arch}) \u2014 ${ok ? "OK" : `too old, need ${MIN_NODE_MAJOR}+`}`);
   console.log(`Bridge: ${bridgeEntry}`);
   const plat = `${process.platform}-${process.arch}`;
-  const vendor = [path5.join(here, "vendor/node-pty"), path5.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")].find((d) => fs5.existsSync(d));
-  const term = vendor && fs5.existsSync(path5.join(vendor, "prebuilds", plat));
+  const vendor = [path6.join(here, "vendor/node-pty"), path6.resolve(here, "../../../plugin/onecarat-agent-office/dist/vendor/node-pty")].find((d) => fs5.existsSync(d));
+  const term = vendor && fs5.existsSync(path6.join(vendor, "prebuilds", plat));
   const claude = resolveClaude();
   console.log(`Built-in terminal: ${term ? `available (${plat})` : `not available for ${plat} \u2014 Office runs read-only`}`);
   console.log(`claude: ${claude ?? "not found on PATH \u2014 the built-in terminal cannot start it"}`);
+  for (const line of researchLines(readClaudeVersion(claude, childEnv()), !!claude)) console.log(line);
   if (!ok) process.exitCode = 1;
 }
 switch (opts.cmd) {

@@ -1,9 +1,15 @@
 // Visual check: screenshots of the LIVE UI (served by the bridge) at real-time intervals.
-// Usage: node tests/screenshots/capture-live.mjs <outDir> <prefix> <count> <intervalMs> [lang]
+//
+// THIS CONNECTS TO THE RUNNING OFFICE with its access key (it only looks: it clicks and types nothing). It is for
+// the user to run, on purpose. Without ONECARAT_OFFICE_LIVE=1 it does nothing.
+// Usage: ONECARAT_OFFICE_LIVE=1 node tests/screenshots/capture-live.mjs <outDir> <prefix> <count> <intervalMs> [lang]
 import { chromium } from 'playwright-core';
 import path from 'node:path';
 import fs from 'node:fs';
 import { readRuntimeFile } from '../../packages/event-bridge/src/runtime-file.ts';
+import { requireLive } from './live-guard.mjs';
+
+requireLive('capture-live.mjs', 'opens the running Office with its access key and takes screenshots of it');
 
 const [outDir = 'tests/screenshots/out', prefix = 'live', count = '6', interval = '4000', lang = 'ja-JP'] = process.argv.slice(2);
 fs.mkdirSync(outDir, { recursive: true });

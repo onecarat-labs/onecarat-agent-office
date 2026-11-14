@@ -7,7 +7,7 @@ allowed-tools: Bash(node --version), PowerShell(node --version), Bash(node "${CL
 
 # Onecarat Agent Office
 
-Onecarat Agent Office is a **companion**. It shows what Claude Code is doing. Its chat panel can host the user's own interactive `claude` in a built-in terminal, where the **user** types and answers permission prompts. Office itself never sends prompts, never answers permission prompts, never calls a model and never reads credentials. Events and terminal output live in memory only.
+Onecarat Agent Office is a **companion**. It shows what Claude Code is doing. Its chat panel can host the user's own interactive `claude` in a built-in terminal, where the **user** types and answers permission prompts. Office itself never answers permission prompts, never calls a model and never reads credentials, and it never sends prompts, with one exception: in its Research Lab view, when the user presses "Start research", Office pastes one research command into the Office terminal's input box; sending it (Enter) is the user's. Events and terminal output live in memory only; Research Lab results are files Claude Code writes in the working folder (`research/`).
 
 The requested action is: `$ARGUMENTS` (default to `start` when empty).
 

@@ -1,4 +1,6 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
+import type { OfficeEvent } from '@onecarat/domain';
 import fs from 'node:fs';
 import path from 'node:path';
 import { EventStore, ReorderBuffer } from './store.ts';
@@ -12,6 +14,8 @@ import { scanConfig } from './config-scan.ts';
 import { NONCE_RE, healthProof } from './proof.ts';
 import { isLocalDir } from './local-dir.ts';
 import { isStartMode } from './claude-path.ts';
+import { revealInFolder } from './reveal.ts';
+import { ResearchController, officeTerminal } from './research.ts';
 
 export interface BridgeOptions {
   port: number;
@@ -27,6 +31,14 @@ export interface BridgeOptions {
   devOrigins?: string[];
   /** Claude Code configuration view (read-only). Without it, /api/config answers 404. */
   config?: { home: string; defaultCwd: string; configDir?: string; managedDir?: string };
+  /**
+   * Research Lab. It needs no terminal of its own: a research runs in the user's Claude Code session (the Office
+   * terminal, or any other), and is followed through hooks and files. `cwd` is the working folder when there is
+   * no terminal. Without a terminal and without this, /api/research is not offered.
+   */
+  research?: { cwd?: string; now?: () => number };
+  /** Shows a file in the file manager (tests replace it). Returns false when it could not. */
+  reveal?: (path: string) => boolean;
 }
 
 export interface Bridge {
@@ -34,6 +46,7 @@ export interface Bridge {
   store: EventStore;
   broadcaster: Broadcaster;
   stats: { received: number; rejected: number };
+  research?: ResearchController;
   /** reason is passed to the UIs ("stopped", "claude-ended"). */
   close: (reason?: string) => Promise<void>;
 }
@@ -53,7 +66,29 @@ export function createBridge(opts: BridgeOptions): Bridge {
   const broadcaster = new Broadcaster(store);
   const reorder = new ReorderBuffer(opts.reorderWindowMs ?? 300, (b) => store.append(b));
   const stats = { received: 0, rejected: 0 };
+  let userSeq = 0;
   const uiRoot = opts.uiDir ? path.resolve(opts.uiDir) : undefined;
+  // Files Claude Code wrote: the full path stays here. Events (and so the page) get a display name and an id.
+  const files = new Map<string, string>();
+  const MAX_FILES = 5000;
+  const hidePath = (e: OfficeEvent): OfficeEvent => {
+    if (e.type !== 'file.created' || !e.path) return e;
+    const fileId = crypto.createHmac('sha256', opts.token).update(e.path).digest('hex').slice(0, 24);
+    files.delete(fileId);
+    files.set(fileId, e.path);
+    if (files.size > MAX_FILES) files.delete(files.keys().next().value!);
+    const { path: _full, ...rest } = e;
+    return { ...rest, fileId };
+  };
+  const research = opts.terminal || opts.research ? new ResearchController({ ...opts.research, cwd: opts.research?.cwd ?? opts.terminal?.state.cwd, terminal: opts.terminal ? officeTerminal(opts.terminal) : undefined, store, filePath: (id) => files.get(id) }) : undefined;
+  const readJson = async (req: http.IncomingMessage): Promise<Record<string, unknown> | undefined> => {
+    try {
+      const v = JSON.parse((await readBody(req, 16 * 1024)).toString('utf8')) as unknown;
+      return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
+    } catch {
+      return undefined;
+    }
+  };
 
   const send = (res: http.ServerResponse, code: number, body: string, type = 'application/json; charset=utf-8', extra: Record<string, string> = {}) => {
     res.writeHead(code, { ...SECURITY_HEADERS, 'content-type': type, 'cache-control': 'no-store', ...extra });
@@ -94,10 +129,10 @@ export function createBridge(opts: BridgeOptions): Bridge {
         // Answer first: the hook must never wait on Office's own processing.
         send(res, 200, '{}');
         stats.received++;
-        const events = eventsFromHookBody(body, header(req, 'x-office-hook-time'));
+        const events = eventsFromHookBody(body, header(req, 'x-office-hook-time')).map(hidePath);
         // Hooks of the claude in the built-in terminal carry that run's marker: its SessionStart names the session.
         const run = header(req, 'x-office-terminal');
-        if (run && opts.terminal) for (const e of events) if (e.type === 'session.started') opts.terminal.adoptSession(run, e.sessionId);
+        if (run) for (const e of events) if (e.type === 'session.started') opts.terminal?.adoptSession(run, e.sessionId);
         reorder.push(events);
       } catch (e) {
         stats.rejected++;
@@ -135,9 +170,44 @@ export function createBridge(opts: BridgeOptions): Bridge {
     }
     if (url.pathname === '/api/clear' && req.method === 'POST') {
       store.clear();
+      files.clear();
       broadcaster.reset();
       opts.terminal?.clearScrollback();
       return send(res, 200, '{}');
+    }
+    if (url.pathname === '/api/waits/dismiss' && req.method === 'POST') {
+      // "Hide this wait": a refused permission prompt sends no hook, so its wait can stay on the page for ever.
+      // This removes it from the DISPLAY of one agent. Nothing is written to a terminal, no prompt is answered,
+      // and the agent is not marked as allowed or refused.
+      const body = await readJson(req);
+      const sessionId = body?.sessionId;
+      const agentId = body?.agentId;
+      const idOk = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 200;
+      if (!idOk(sessionId) || (agentId !== undefined && !idOk(agentId))) return send(res, 400, '{"error":"bad request"}');
+      if (!store.snapshot().some((e) => e.sessionId === sessionId)) return send(res, 404, '{}');
+      reorder.flush();
+      store.append([{ id: `${Date.now()}.${++userSeq}`, at: Date.now(), sessionId, source: 'live', agentId, type: 'wait.dismissed' }]);
+      return send(res, 200, research ? JSON.stringify(research.info()) : '{}');
+    }
+    // ---- Research Lab ----
+    if (url.pathname === '/api/research' && req.method === 'GET') {
+      if (!research) return send(res, 404, '{}');
+      return send(res, 200, JSON.stringify(research.info(url.searchParams.get('refresh') === '1')));
+    }
+    if (url.pathname === '/api/research/start' && req.method === 'POST') {
+      // The user pressed "Start research". This is the only request that makes Office write into a terminal:
+      // one command line into the input box. Enter is the user's.
+      if (!research) return send(res, 404, '{}');
+      const body = await readJson(req);
+      if (!body) return send(res, 400, '{"error":"bad request"}');
+      const r = research.start(body.theme, body.count, body.researchers ?? 2);
+      return 'error' in r ? send(res, 409, JSON.stringify(r)) : send(res, 200, JSON.stringify(research.info()));
+    }
+    if (url.pathname === '/api/research/dismiss' && req.method === 'POST') {
+      // Drops a research that has not started. Nothing is written to the terminal and nothing is stopped.
+      if (!research) return send(res, 404, '{}');
+      research.dismiss();
+      return send(res, 200, JSON.stringify(research.info()));
     }
     if (url.pathname === '/api/config' && req.method === 'GET') {
       // Read-only, read again on every request, nothing kept. Secret values are hidden in config-scan.ts.
@@ -150,6 +220,15 @@ export function createBridge(opts: BridgeOptions): Bridge {
         cwd = asked;
       }
       return send(res, 200, JSON.stringify(scanConfig({ cwd, home: opts.config.home, configDir: opts.config.configDir, managedDir: opts.config.managedDir })));
+    }
+    if (url.pathname === '/api/reveal' && req.method === 'POST') {
+      // "Open folder" for a file Claude Code wrote. Only a path this bridge itself recorded as written is accepted,
+      // so the page cannot make the file manager open anything else. The page names it by id; it never has the path.
+      const id = (await readJson(req))?.id;
+      if (id === undefined) return send(res, 400, '{"error":"bad request"}');
+      const file = typeof id === 'string' ? files.get(id) : undefined;
+      if (!file) return send(res, 404, '{"error":"unknown file"}');
+      return (opts.reveal ?? revealInFolder)(file) ? send(res, 200, '{}') : send(res, 410, '{"error":"gone"}');
     }
     if (url.pathname === '/api/shutdown' && req.method === 'POST') {
       // Used by the launcher's "stop" (it reads the token from the runtime file).
@@ -196,12 +275,13 @@ export function createBridge(opts: BridgeOptions): Bridge {
     } catch {
       return refuse(socket, 400, 'Bad Request');
     }
-    if (pathname !== '/pty' || !opts.terminal) return refuse(socket, 404, 'Not Found');
+    const target = pathname === '/pty' ? opts.terminal : undefined;
+    if (!target) return refuse(socket, 404, 'Not Found');
     // All three checks run before the WebSocket exists: Host (DNS rebinding), exact Origin, token.
     if (!hostAllowed(req, opts.port)) return refuse(socket, 421, 'Misdirected Request');
     if (!allowedOrigins.has(String(req.headers.origin ?? ''))) return refuse(socket, 403, 'Forbidden');
     if (!tokenMatches(protocolToken(req.headers['sec-websocket-protocol']), opts.token)) return refuse(socket, 403, 'Forbidden');
-    wss.handleUpgrade(req, socket, head, (ws) => attachTerminal(ws, opts.terminal!));
+    wss.handleUpgrade(req, socket, head, (ws) => attachTerminal(ws, target));
   });
 
   return {
@@ -209,10 +289,12 @@ export function createBridge(opts: BridgeOptions): Bridge {
     store,
     broadcaster,
     stats,
+    research,
     close: (reason?: string) =>
       new Promise<void>((resolve) => {
         reorder.flush();
         broadcaster.close(reason);
+        research?.dispose();
         opts.terminal?.stop();
         for (const c of wss.clients) c.terminate();
         server.close(() => resolve());

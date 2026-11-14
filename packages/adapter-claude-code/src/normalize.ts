@@ -1,7 +1,7 @@
 // Claude Code hook input (the JSON a command/http hook receives) -> normalized Office events.
 // Field names verified on Claude Code 2.1.319 (docs/event-support-matrix.md).
-import type { Activity, DataSource, OfficeEvent, OfficeEventBody } from '@onecarat/domain';
-import { clip, displayPath, maskSecrets } from './mask.ts';
+import type { Activity, BackgroundTask, DataSource, OfficeEvent, OfficeEventBody } from '@onecarat/domain';
+import { clip, displayPath, isSensitivePath, maskSecrets } from './mask.ts';
 
 /** The subset of hook input fields we read. Everything else is ignored (and never stored). */
 export interface HookInput {
@@ -74,7 +74,7 @@ function safeHost(u: string): string {
 }
 
 /** Turns Claude Code started itself arrive as UserPromptSubmit (documented). Detect the wrappers we have seen. */
-export function classifyPrompt(text: string): { injected: false } | { injected: true; kind: string; fromAgentId?: string } {
+export function classifyPrompt(text: string): { injected: false } | { injected: true; kind: string; fromAgentId?: string; taskStatus?: string } {
   const t = text.trimStart();
   const m = /^<([a-z][a-z0-9-]*)\b([^>]*)>/i.exec(t);
   if (!m) return { injected: false };
@@ -84,7 +84,21 @@ export function classifyPrompt(text: string): { injected: false } | { injected: 
   }
   // agent-message carries from="<agent id>"; a background subagent's task-notification carries <task-id><agent id></task-id>.
   const from = /\bfrom="([^"]+)"/.exec(m[2] ?? '')?.[1] ?? (tag === 'task-notification' ? /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(t)?.[1] : undefined);
-  return { injected: true, kind: tag, fromAgentId: from };
+  // The notification's own <status> (before the free-text result, which is the subagent's words).
+  const status = tag === 'task-notification' ? /<status>\s*([A-Za-z_-]{1,30})\s*<\/status>/.exec(t.split('<result>')[0]!.slice(0, 2000))?.[1]?.toLowerCase() : undefined;
+  return { injected: true, kind: tag, fromAgentId: from, taskStatus: status };
+}
+
+function backgroundTasks(v: unknown): BackgroundTask[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: BackgroundTask[] = [];
+  for (const t of v.slice(0, 50)) {
+    if (!t || typeof t !== 'object') continue;
+    const r = t as Record<string, unknown>;
+    if (typeof r.id !== 'string' || !r.id) continue;
+    out.push({ id: r.id.slice(0, 200), status: typeof r.status === 'string' ? r.status.slice(0, 50) : '', agentType: typeof r.agent_type === 'string' && r.agent_type ? r.agent_type.slice(0, 200) : undefined });
+  }
+  return out;
 }
 
 export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEvent[] {
@@ -94,7 +108,7 @@ export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEv
   const agentId = typeof input.agent_id === 'string' && input.agent_id ? input.agent_id : undefined;
   const out: OfficeEvent[] = [];
   const emit = (body: OfficeEventBody, actor: string | undefined = agentId) => {
-    out.push({ id: `${ctx.seq}.${out.length}`, at: ctx.at, sessionId, source: ctx.source, agentId: actor, cwd: typeof input.cwd === 'string' ? input.cwd : undefined, permissionMode: typeof input.permission_mode === 'string' ? input.permission_mode : undefined, ...body } as OfficeEvent);
+    out.push({ id: `${ctx.seq}.${out.length}`, at: ctx.at, sessionId, source: ctx.source, agentId: actor, agentType: actor && actor === agentId && typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : undefined, cwd: typeof input.cwd === 'string' ? input.cwd : undefined, permissionMode: typeof input.permission_mode === 'string' ? input.permission_mode : undefined, ...body } as OfficeEvent);
   };
   const toolName = String(input.tool_name ?? '');
   const toolUseId = String(input.tool_use_id ?? '');
@@ -109,7 +123,7 @@ export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEv
     case 'UserPromptSubmit': {
       const text = typeof input.prompt === 'string' ? input.prompt : '';
       const c = classifyPrompt(text);
-      if (c.injected) emit({ type: 'injected.prompt', kind: c.kind, fromAgentId: c.fromAgentId, preview: clip(maskSecrets(text.replace(/<[^>]+>/g, ' ')), 100) }, undefined);
+      if (c.injected) emit({ type: 'injected.prompt', kind: c.kind, fromAgentId: c.fromAgentId, taskStatus: c.taskStatus, preview: clip(maskSecrets(text.replace(/<[^>]+>/g, ' ')), 100) }, undefined);
       else emit({ type: 'user.prompt', text }, undefined);
       break;
     }
@@ -128,10 +142,16 @@ export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEv
     }
     case 'PostToolUse': {
       emit({ type: 'tool.finished', toolUseId, toolName, durationMs: typeof input.duration_ms === 'number' ? input.duration_ms : undefined });
-      if (!agentId && (toolName === 'Agent' || toolName === 'Task')) {
+      // Also for a subagent's own Agent call (a nested helper): the caller is this event's agent.
+      if (toolName === 'Agent' || toolName === 'Task') {
         const r = input.tool_response as Record<string, unknown> | undefined;
         const childId = typeof r?.agentId === 'string' ? r.agentId : undefined;
         if (childId) emit({ type: 'subagent.linked', toolUseId, childId, finished: r?.isAsync !== true });
+      }
+      // Write finished: a whole file was written. Absolute paths only, and never a file whose name looks sensitive.
+      if (toolName === 'Write') {
+        const p = input.tool_input?.file_path;
+        if (typeof p === 'string' && /^([A-Za-z]:[\\/]|\/)/.test(p) && !p.startsWith('//') && !isSensitivePath(p)) emit({ type: 'file.created', name: displayPath(p), path: p });
       }
       break;
     }
@@ -157,7 +177,7 @@ export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEv
       break;
     case 'Stop': {
       const last = typeof input.last_assistant_message === 'string' && input.last_assistant_message ? input.last_assistant_message : undefined;
-      emit({ type: 'turn.stopped', lastMessage: last }, undefined);
+      emit({ type: 'turn.stopped', lastMessage: last, backgroundTasks: backgroundTasks(input.background_tasks) }, undefined);
       break;
     }
     default:

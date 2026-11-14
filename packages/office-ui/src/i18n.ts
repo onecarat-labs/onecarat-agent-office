@@ -28,9 +28,15 @@ const en = {
   board: 'Tasks',
   boardOpen: 'Show the task list',
   waitingCount: '{n} waiting for permission',
+  waitRow: '{who}: waiting for permission ({since})',
+  waitHide: 'Hide this wait (nothing is sent to Claude Code)',
+  waitHideNote: 'Claude Code sends nothing when a prompt is refused, so Office cannot know how this one ended. This only removes the wait from the Office page: no prompt is answered, and it is not recorded as allowed or refused.',
   overview: 'Overview',
   overviewAgents: 'Agents',
   overviewNow: 'Activity',
+  filesCreated: 'Files created',
+  openFolder: 'Open folder',
+  openFolderFailed: 'Not found',
   termMore: 'More actions',
   termChangeFolder: 'Change working folder',
   termFolderNow: 'Current folder',
@@ -177,9 +183,15 @@ const ja: Dict = {
   board: 'タスク一覧',
   boardOpen: 'タスク一覧を表示',
   waitingCount: '許可待ち {n}',
+  waitRow: '{who}: 許可待ち（{since}）',
+  waitHide: 'この表示を消す（Claude Code には何も送りません）',
+  waitHideNote: '承認で No を選んだあとは Claude Code から何も届かないため、Office は結果を知ることができません。このボタンは Office の表示だけを消します。承認にも拒否にも答えず、「承認された」「拒否された」のどちらとしても記録しません。',
   overview: '全体',
   overviewAgents: 'エージェント',
   overviewNow: '稼働状況',
+  filesCreated: '作成したファイル',
+  openFolder: 'フォルダを開く',
+  openFolderFailed: '見つかりません',
   termMore: 'その他の操作',
   termChangeFolder: '作業フォルダを変更',
   termFolderNow: '現在のフォルダ',
@@ -367,9 +379,19 @@ export function detectLang(): Lang {
  * The event identifiers (agent_id / agent_type) are never changed; Console shows the raw agent_type.
  */
 const builtinAlias: Record<Lang, Record<string, string>> = {
-  en: { Explore: 'Explorer', Plan: 'Planner', 'general-purpose': 'General', 'claude-code-guide': 'Guide', 'statusline-setup': 'Status line', claude: 'General' },
-  ja: { Explore: '調査', Plan: '設計', 'general-purpose': '汎用', 'claude-code-guide': 'ガイド', 'statusline-setup': 'ステータス設定', claude: '汎用' },
+  en: { Explore: 'Explorer', Plan: 'Planner', 'general-purpose': 'General', 'claude-code-guide': 'Guide', 'statusline-setup': 'Status line', claude: 'General', 'web-fetch': 'Page fetch', 'onecarat-agent-office:researcher': 'Researcher' },
+  ja: { Explore: '調査', Plan: '設計', 'general-purpose': '汎用', 'claude-code-guide': 'ガイド', 'statusline-setup': 'ステータス設定', claude: '汎用', 'web-fetch': 'ページ取得', 'onecarat-agent-office:researcher': 'リサーチャー' },
 };
+
+/** How long ago something began, for "waiting since": a fact from the event's time, never a countdown. */
+export function sinceText(lang: Lang, at: number, now: number): string {
+  const min = Math.floor(Math.max(0, now - at) / 60_000);
+  if (min < 1) return lang === 'ja' ? 'たった今' : 'just now';
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (lang === 'ja') return h ? `${h}時間${m}分前から` : `${m}分前から`;
+  return h ? `for ${h} h ${m} min` : `for ${m} min`;
+}
 
 export function displayName(a: { role: 'manager' | 'subagent'; agentType: string; label: string }, lang: Lang): string {
   if (a.role === 'manager') return dict[lang].manager;

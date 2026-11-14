@@ -86,6 +86,14 @@ export function pickHookFields(input) {
     const r = input.tool_response;
     out.tool_response = { agentId: clip(r.agentId, 200), isAsync: r.isAsync === true, status: clip(r.status, 50) };
   }
+  // Stop: which background tasks are still running (id, state and type only; never their description or output).
+  // It is how Office learns that a background subagent has really ended.
+  if (input.hook_event_name === 'Stop' && Array.isArray(input.background_tasks)) {
+    out.background_tasks = input.background_tasks
+      .filter((t) => t && typeof t === 'object' && typeof t.id === 'string')
+      .slice(0, 50)
+      .map((t) => ({ id: clip(t.id, 200), status: clip(t.status, 50), agent_type: clip(t.agent_type, 200) }));
+  }
   return out;
 }
 

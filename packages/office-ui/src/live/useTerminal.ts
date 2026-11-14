@@ -23,7 +23,7 @@ export interface TermSink {
  * WebSocket link to the bridge's embedded terminal. The access key goes in a subprotocol (browsers cannot set
  * WebSocket headers); the server answers with "office.v1" only. Nothing is stored: output goes straight to xterm.
  */
-export function useTerminal(enabled: boolean) {
+export function useTerminal(enabled: boolean, path = '/pty') {
   const [state, setState] = useState<TermState | undefined>();
   const [link, setLink] = useState<TermLink>('connecting');
   const ws = useRef<WebSocket | undefined>(undefined);
@@ -40,7 +40,7 @@ export function useTerminal(enabled: boolean) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const open = () => {
       setLink('connecting');
-      const s = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/pty`, ['office.v1', `office-token.${token}`]);
+      const s = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`, ['office.v1', `office-token.${token}`]);
       ws.current = s;
       s.onopen = () => setLink('open');
       s.onmessage = (ev) => {
@@ -72,7 +72,7 @@ export function useTerminal(enabled: boolean) {
       ws.current?.close();
       ws.current = undefined;
     };
-  }, [enabled]);
+  }, [enabled, path]);
 
   const send = useCallback<TermSend>((m) => {
     const s = ws.current;

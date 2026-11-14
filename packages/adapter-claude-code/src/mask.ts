@@ -50,6 +50,10 @@ export function clip(s: string, n: number): string {
 
 const SENSITIVE_PATH = /(^|[\\/])(\.env(\.[^\\/]*)?|\.credentials\.json|id_(rsa|ed25519|ecdsa)(\.pub)?|[^\\/]*\.(pem|key|p12|pfx))$/i;
 
+export function isSensitivePath(p: string): boolean {
+  return SENSITIVE_PATH.test(p);
+}
+
 /** Show only the file name, and hide names that themselves look sensitive. */
 export function displayPath(p: unknown): string {
   if (typeof p !== 'string' || !p) return '';

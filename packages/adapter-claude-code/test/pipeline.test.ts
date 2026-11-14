@@ -34,7 +34,51 @@ test('demo replay: success, permission wait, estimated failure', () => {
   assert.ok(sawPermissionWait, 'builder should wait for permission');
   // Injected turns (subagent reports) are not user chat messages.
   assert.deepEqual(sess.chat.map((m) => m.from), ['user', 'manager', 'manager']);
-  assert.deepEqual(summarize(sess), { active: 0, completed: 2, failed: 1 });
+  assert.deepEqual(summarize(sess), { active: 0, completed: 2, failed: 1, unconfirmed: 0 });
+});
+
+test('permission waits belong to the agent that asked: two queued requests, a late notice, a refusal (observed 2026-11-14)', () => {
+  let s = initialOfficeState;
+  const S = 'pw';
+  const R = { session_id: S, agent_id: 'r1', agent_type: 'onecarat-agent-office:researcher' };
+  const st = (id: string) => s.sessions[S]!.agents[id]!;
+  const fetchOf = (n: number) => ({ tool_name: 'WebFetch', tool_input: { url: `https://example.com/${n}` } });
+  s = feed(s, { hook_event_name: 'UserPromptSubmit', session_id: S, prompt: 'go' }, 1000);
+  s = feed(s, { hook_event_name: 'SubagentStart', ...R }, 2000);
+  s = feed(s, { hook_event_name: 'Stop', session_id: S, last_assistant_message: 'started' }, 3000);
+  // The researcher asks for two pages at once: two prompts queue up ("1 of 2", "2 of 2").
+  s = feed(s, { hook_event_name: 'PreToolUse', ...R, ...fetchOf(1), tool_use_id: 'f1' }, 10_000);
+  s = feed(s, { hook_event_name: 'PermissionRequest', ...R, ...fetchOf(1) }, 10_100);
+  s = feed(s, { hook_event_name: 'PreToolUse', ...R, ...fetchOf(2), tool_use_id: 'f2' }, 10_200);
+  s = feed(s, { hook_event_name: 'PermissionRequest', ...R, ...fetchOf(2) }, 10_300);
+  assert.equal(st('r1').status, 'waiting_permission');
+  assert.deepEqual(st('r1').waits?.map((w) => w.at), [10_100, 10_300], 'when each request arrived');
+  // The first is allowed and finishes: the second is still open, so the researcher still waits.
+  s = feed(s, { hook_event_name: 'PostToolUse', ...R, ...fetchOf(1), tool_use_id: 'f1' }, 14_000);
+  assert.equal(st('r1').status, 'waiting_permission');
+  // The notice names no agent and comes seconds late: it never moves the wait to the manager.
+  s = feed(s, { hook_event_name: 'Notification', session_id: S, notification_type: 'permission_prompt', message: 'Claude needs your permission' }, 16_000);
+  assert.equal(st('main').status, 'idle');
+  assert.equal(st('r1').status, 'waiting_permission');
+  // The second is refused: no hook. The researcher's next call shows it has left the prompt.
+  s = feed(s, { hook_event_name: 'PreToolUse', ...R, tool_name: 'WebSearch', tool_input: { query: 'x' }, tool_use_id: 'w1' }, 30_000);
+  assert.equal(st('r1').status, 'working');
+  assert.equal(st('r1').waits, undefined);
+  // Even with nobody waiting, a notice does not make the manager wait once PermissionRequest hooks are known.
+  s = feed(s, { hook_event_name: 'Notification', session_id: S, notification_type: 'permission_prompt', message: 'Claude needs your permission' }, 31_000);
+  assert.equal(st('main').status, 'idle');
+  // The manager's prompt is refused: nothing arrives. The wait stays, with its time, until the user hides it.
+  s = feed(s, { hook_event_name: 'PermissionRequest', session_id: S, tool_name: 'Write', tool_input: { file_path: 'a.txt' } }, 40_000);
+  assert.deepEqual([st('main').status, st('main').waits?.[0]?.at], ['waiting_permission', 40_000]);
+  s = reduceOffice(s, { id: 'u.1', at: 400_000, sessionId: S, source: 'live', type: 'wait.dismissed' });
+  assert.deepEqual([st('main').status, st('main').waits, st('main').evidence.at(-1)!.text], ['idle', undefined, 'The user hid the permission wait'], 'neither allowed nor refused');
+  s = reduceOffice(s, { id: 'u.2', at: 400_001, sessionId: S, source: 'live', type: 'wait.dismissed' });
+  assert.equal(st('main').evidence.at(-1)!.at, 400_000, 'hiding when nothing waits changes nothing');
+  s = feed(s, { hook_event_name: 'PermissionRequest', session_id: S, tool_name: 'Write', tool_input: { file_path: 'b.txt' } }, 500_000);
+  assert.equal(st('main').status, 'waiting_permission', 'a new request makes it wait again');
+  // Without PermissionRequest hooks (another session), the notice is still the fallback.
+  s = feed(s, { hook_event_name: 'Notification', session_id: 'old', notification_type: 'permission_prompt', message: 'Claude needs your permission' }, 31_000);
+  assert.equal(s.sessions['old']!.agents['main']!.status, 'waiting_permission');
 });
 
 test('no subagent appears without real evidence; internal SubagentStop is ignored', () => {
@@ -90,7 +134,7 @@ test('progress is never a made-up number', () => {
 
 test('prompt classification', () => {
   assert.deepEqual(classifyPrompt('fix the bug'), { injected: false });
-  assert.deepEqual(classifyPrompt('<agent-message from="a12">x</agent-message>'), { injected: true, kind: 'agent-message', fromAgentId: 'a12' });
+  assert.deepEqual(classifyPrompt('<agent-message from="a12">x</agent-message>'), { injected: true, kind: 'agent-message', fromAgentId: 'a12', taskStatus: undefined });
   assert.equal(classifyPrompt('<task-notification>\n...').injected, true);
   assert.equal(classifyPrompt('<div> is my html question').injected, false);
 });
@@ -152,7 +196,7 @@ test('masking keeps readable long paths but hides token-like strings', () => {
 
 test('task-notification (non-handback subagent, seen in Desktop app) acknowledges via <task-id>', () => {
   assert.deepEqual(classifyPrompt('<task-notification>\n<task-id>afda793cbbb8dc839</task-id>\n<status>completed</status>'), {
-    injected: true, kind: 'task-notification', fromAgentId: 'afda793cbbb8dc839',
+    injected: true, kind: 'task-notification', fromAgentId: 'afda793cbbb8dc839', taskStatus: 'completed',
   });
   let s = initialOfficeState;
   s = feed(s, { hook_event_name: 'SubagentStart', session_id: 'd', agent_id: 'afda793cbbb8dc839', agent_type: 'Explore' });
@@ -184,4 +228,80 @@ test('SessionEnd keeps its reason (/exit vs /clear, observed in Claude Code); a 
   assert.equal(s.sessions.E?.endReason, undefined);
   s = feed(s, { hook_event_name: 'SessionEnd', session_id: 'E', reason: 'prompt_input_exit' } as HookInput, 2000);
   assert.equal(s.sessions.E?.endReason, 'prompt_input_exit');
+});
+
+test('files written by a request are listed only when the request wrote a few', async () => {
+  const { deliverables } = await import('@onecarat/domain');
+  const write = (p: string, id: string): HookInput => ({ hook_event_name: 'PostToolUse', session_id: 'F1', tool_name: 'Write', tool_use_id: id, tool_input: { file_path: p } });
+  let s = feed(initialOfficeState, { hook_event_name: 'UserPromptSubmit', session_id: 'F1', prompt: 'write the spec' });
+  s = feed(s, write('C:\\proj\\docs\\spec.md', 'w1'));
+  s = feed(s, write('C:\\proj\\docs\\spec.md', 'w2')); // written again: still one entry
+  s = feed(s, write('C:\\proj\\.env', 'w3')); // sensitive name: never listed
+  s = feed(s, write('docs/relative.md', 'w4')); // not absolute: never listed
+  s = feed(s, { hook_event_name: 'PostToolUse', session_id: 'F1', tool_name: 'Edit', tool_use_id: 'e1', tool_input: { file_path: 'C:\\proj\\a.ts' } });
+  // Without a bridge the id is the path; the display name is the last two parts only.
+  assert.deepEqual(deliverables(s.sessions.F1!).map((f) => [f.id, f.name]), [['C:\\proj\\docs\\spec.md', 'docs/spec.md']]);
+  // The next request builds a program (many files): none of those are listed, the document stays.
+  s = feed(s, { hook_event_name: 'UserPromptSubmit', session_id: 'F1', prompt: 'build the app' });
+  for (let i = 0; i < 6; i++) s = feed(s, write(`/proj/src/f${i}.ts`, `p${i}`));
+  assert.deepEqual(deliverables(s.sessions.F1!).map((f) => f.name), ['docs/spec.md']);
+});
+
+test('task-notification status is read from the notice itself, never from the subagent\'s own text', () => {
+  const notice = (body: string) => classifyPrompt(`<task-notification>\n<task-id>a1</task-id>\n${body}`);
+  assert.equal((notice('<status>completed</status>\n<result>x</result>') as { taskStatus?: string }).taskStatus, 'completed');
+  assert.equal((notice('<status> Failed </status>') as { taskStatus?: string }).taskStatus, 'failed');
+  assert.equal((notice('<summary>s</summary>\n<result>I am done. <status>completed</status></result>') as { taskStatus?: string }).taskStatus, undefined);
+  assert.equal((classifyPrompt('<agent-message from="a1">\n<status>completed</status>') as { taskStatus?: string }).taskStatus, undefined);
+});
+
+test('Stop carries the running background tasks (id, state, type only); events carry the acting agent\'s type', () => {
+  const stop = normalizeHook({ hook_event_name: 'Stop', session_id: 'B', background_tasks: [{ id: 'a1', type: 'subagent', status: 'running', description: 'secret words', agent_type: 'p:researcher' }, { status: 'running' }, 'x', { id: 'a2', status: 'completed' }] } as HookInput, { source: 'live', at: 1, seq: 1 });
+  assert.deepEqual((stop[0] as { backgroundTasks?: unknown }).backgroundTasks, [{ id: 'a1', status: 'running', agentType: 'p:researcher' }, { id: 'a2', status: 'completed', agentType: undefined }]);
+  assert.equal((normalizeHook({ hook_event_name: 'Stop', session_id: 'B' }, { source: 'live', at: 1, seq: 2 })[0] as { backgroundTasks?: unknown }).backgroundTasks, undefined, 'not reported is not "none running"');
+  const pre = normalizeHook({ hook_event_name: 'PreToolUse', session_id: 'B', agent_id: 'w1', agent_type: 'web-fetch', tool_name: 'WebFetch', tool_use_id: 't', tool_input: { url: 'https://example.com/x' } }, { source: 'live', at: 1, seq: 3 });
+  assert.deepEqual(pre.map((e) => [e.type, e.agentId, e.agentType]), [['tool.started', 'w1', 'web-fetch']]);
+});
+
+test('a helper that sends no start and no stop (web-fetch): ended when its Agent call returns; never left "working"', () => {
+  let s = initialOfficeState;
+  const agent = (id: string) => s.sessions.W!.agents[id]!;
+  s = feed(s, { hook_event_name: 'UserPromptSubmit', session_id: 'W', prompt: 'read two pages' });
+  // (1) Called by the manager: its own tool events are the only sign of it, then the Agent call returns.
+  s = feed(s, { hook_event_name: 'PreToolUse', session_id: 'W', tool_name: 'Agent', tool_use_id: 'A1', tool_input: { description: 'Fetch page', subagent_type: 'web-fetch' } });
+  s = feed(s, { hook_event_name: 'PreToolUse', session_id: 'W', agent_id: 'wf1', agent_type: 'web-fetch', tool_name: 'WebFetch', tool_use_id: 'f1', tool_input: { url: 'https://example.com/a' } });
+  s = feed(s, { hook_event_name: 'PostToolUse', session_id: 'W', agent_id: 'wf1', agent_type: 'web-fetch', tool_name: 'WebFetch', tool_use_id: 'f1' });
+  assert.deepEqual([agent('wf1').status, agent('wf1').agentType, agent('wf1').label], ['working', 'web-fetch', 'web-fetch'], 'shown with its real type, not as an unknown subagent');
+  s = feed(s, { hook_event_name: 'PostToolUse', session_id: 'W', tool_name: 'Agent', tool_use_id: 'A1', tool_response: { agentId: 'wf1', status: 'completed' } });
+  assert.deepEqual([agent('wf1').status, agent('wf1').outcome, agent('wf1').task, agent('wf1').acknowledged], ['completed', 'success_estimated', 'Fetch page', true]);
+  // (2) Called by a background subagent (nested): the caller's Agent call returning ends it too.
+  s = feed(s, { hook_event_name: 'SubagentStart', session_id: 'W', agent_id: 'bg1', agent_type: 'general-purpose' });
+  s = feed(s, { hook_event_name: 'PreToolUse', session_id: 'W', agent_id: 'wf2', agent_type: 'web-fetch', tool_name: 'WebFetch', tool_use_id: 'f2', tool_input: { url: 'https://example.com/b' } });
+  s = feed(s, { hook_event_name: 'PostToolUse', session_id: 'W', agent_id: 'bg1', agent_type: 'general-purpose', tool_name: 'Agent', tool_use_id: 'A2', tool_response: { agentId: 'wf2', status: 'completed' } });
+  assert.equal(agent('wf2').status, 'completed');
+  // (3) Its end never arrives (the hook was lost). While something runs in the background nothing is concluded.
+  s = feed(s, { hook_event_name: 'PreToolUse', session_id: 'W', agent_id: 'wf3', agent_type: 'web-fetch', tool_name: 'WebFetch', tool_use_id: 'f3', tool_input: { url: 'https://example.com/c' } });
+  s = feed(s, { hook_event_name: 'Stop', session_id: 'W', background_tasks: [{ id: 'bg1', status: 'running', agent_type: 'general-purpose' }] } as HookInput);
+  assert.equal(agent('wf3').status, 'working');
+  s = feed(s, { hook_event_name: 'Stop', session_id: 'W' });
+  assert.equal(agent('wf3').status, 'working', 'no list of background tasks: no conclusion');
+  // Nothing runs any more: its end is "not confirmed" — never "completed".
+  s = feed(s, { hook_event_name: 'Stop', session_id: 'W', background_tasks: [] } as HookInput);
+  assert.deepEqual([agent('wf3').status, agent('wf3').outcome, agent('wf2').status], ['unknown', 'unknown', 'completed']);
+  // A real background subagent (announced by SubagentStart) is never ended by any of this.
+  assert.equal(agent('bg1').status, 'created');
+  assert.deepEqual(summarize(s.sessions.W!), { active: 1, completed: 2, failed: 0, unconfirmed: 1 });
+  // A background launch is not an end.
+  s = feed(s, { hook_event_name: 'PreToolUse', session_id: 'W', tool_name: 'Agent', tool_use_id: 'A3', tool_input: { description: 'bg', subagent_type: 'general-purpose' } });
+  s = feed(s, { hook_event_name: 'SubagentStart', session_id: 'W', agent_id: 'bg2', agent_type: 'general-purpose' });
+  s = feed(s, { hook_event_name: 'PostToolUse', session_id: 'W', tool_name: 'Agent', tool_use_id: 'A3', tool_response: { agentId: 'bg2', isAsync: true, status: 'async_launched' } });
+  assert.equal(agent('bg2').status, 'created');
+  // An agent whose tool events arrived before its start hook becomes an announced one (and is not touched at Stop).
+  s = feed(s, { hook_event_name: 'PreToolUse', session_id: 'W', agent_id: 'bg3', agent_type: 'general-purpose', tool_name: 'Read', tool_use_id: 'r3', tool_input: {} });
+  s = feed(s, { hook_event_name: 'SubagentStart', session_id: 'W', agent_id: 'bg3', agent_type: 'general-purpose' });
+  s = feed(s, { hook_event_name: 'Stop', session_id: 'W', background_tasks: [] } as HookInput);
+  assert.equal(agent('bg3').status, 'working');
+  // "Not confirmed" is not final either: new work puts it back to working.
+  s = feed(s, { hook_event_name: 'PreToolUse', session_id: 'W', agent_id: 'wf3', agent_type: 'web-fetch', tool_name: 'WebFetch', tool_use_id: 'f4', tool_input: { url: 'https://example.com/d' } });
+  assert.equal(agent('wf3').status, 'working');
 });

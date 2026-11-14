@@ -27,7 +27,7 @@ const check = (name, ok, detail = '') => {
 const near = (a, b, tol = 3) => Math.abs(a - b) <= tol;
 const sizes = () => page.evaluate(() => {
   const r = (sel) => document.querySelector(sel).getBoundingClientRect();
-  const panels = document.querySelectorAll('.bottom > .panel');
+  const panels = document.querySelectorAll('.bottom > .panel:not(.mode-off)');
   return {
     stage: r('.stage').height,
     bottom: r('.bottom').height,
@@ -35,7 +35,7 @@ const sizes = () => page.evaluate(() => {
     console: panels[1].getBoundingClientRect().width,
     font: parseFloat(getComputedStyle(document.querySelector('.panel-head')).fontSize),
     // the built-in terminal (xterm) when this machine has it; undefined otherwise
-    termFont: document.querySelector('.term .xterm-rows') ? parseFloat(getComputedStyle(document.querySelector('.term .xterm-rows')).fontSize) : undefined,
+    termFont: document.querySelector('.panel:not(.mode-off) .term .xterm-rows') ? parseFloat(getComputedStyle(document.querySelector('.panel:not(.mode-off) .term .xterm-rows')).fontSize) : undefined,
     overflow: document.documentElement.scrollWidth > window.innerWidth || document.documentElement.scrollHeight > window.innerHeight,
   };
 });
@@ -106,7 +106,7 @@ if (d0.termFont !== undefined) {
   await page.click('.term-bar .menu-btn');
   const menu = await page.evaluate(() => {
     const m = document.querySelector('.menu-body');
-    return { items: [...m.querySelectorAll('[role=menuitem]')].map((e) => e.textContent), scrolls: m.scrollHeight > m.clientHeight || m.scrollWidth > m.clientWidth, w: m.getBoundingClientRect().width, termW: document.querySelector('.term').getBoundingClientRect().width, focus: document.activeElement?.textContent };
+    return { items: [...m.querySelectorAll('[role=menuitem]')].map((e) => e.textContent), scrolls: m.scrollHeight > m.clientHeight || m.scrollWidth > m.clientWidth, w: m.getBoundingClientRect().width, termW: document.querySelector('.panel:not(.mode-off) .term').getBoundingClientRect().width, focus: document.activeElement?.textContent };
   });
   check('menu: two items', menu.items.join('|') === '作業フォルダを変更|ターミナルの文字の大きさ', menu.items.join('|'));
   check('menu: no scrollbar, narrower than half the terminal', !menu.scrolls && menu.w < menu.termW / 2, `${menu.w} / ${menu.termW}`);
@@ -154,7 +154,7 @@ if (d0.termFont !== undefined) {
   check('close button closes the folder dialog', (await page.locator('dialog[open]').count()) === 0);
   check('still at 120% after the dialogs', (await stored('office.termScale')) === '1.2');
   // Ctrl + wheel over the terminal: one step, and the page itself is not zoomed or scrolled.
-  const tb = await page.locator('.term').boundingBox();
+  const tb = await page.locator('.panel:not(.mode-off) .term').boundingBox();
   await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2);
   await page.keyboard.down('Control');
   await page.mouse.wheel(0, -120);
@@ -195,7 +195,7 @@ check('restored: office height back', near((await sizes()).stage, d5.stage, 1));
 // Double-click on the empty part of a pane's header maximizes it; again restores. Not on its controls.
 const paneState = () => page.evaluate(() => document.querySelector('.main').className.match(/max-\w+/)?.[0] ?? 'none');
 for (const [i, name] of [[0, 'terminal'], [1, 'console']]) {
-  const head = page.locator('.bottom > .panel').nth(i).locator('.panel-head');
+  const head = page.locator('.bottom > .panel:not(.mode-off)').nth(i).locator('.panel-head');
   const title = await head.locator('span[id]').boundingBox();
   const at = { position: { x: title.x + title.width + 30 - (await head.boundingBox()).x, y: 12 } };
   await head.dblclick(at);
