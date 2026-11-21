@@ -1,5 +1,6 @@
 // Claude Code hook input (the JSON a command/http hook receives) -> normalized Office events.
-// Field names verified on Claude Code 2.1.319 (docs/event-support-matrix.md).
+// Field names checked against the official hooks reference on 2026-11-21 (docs/hook-events.md).
+// Hook input is untrusted in shape: unknown events, unknown fields and wrong types are ignored, never thrown on.
 import type { Activity, BackgroundTask, DataSource, OfficeEvent, OfficeEventBody } from '@onecarat/domain';
 import { clip, displayPath, isSensitivePath, maskSecrets } from './mask.ts';
 
@@ -40,7 +41,8 @@ const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const WEB_TOOLS = new Set(['WebFetch', 'WebSearch']);
 const REPORT_TOOLS = new Set(['SubagentHandback', 'SendMessage']);
-const TEST_CMD = /(^|[\s;&|(])(npm|pnpm|yarn|bun)\s+(run\s+)?(test|lint|typecheck|check)\b|\b(jest|vitest|pytest|mocha|playwright|cargo\s+test|go\s+test|dotnet\s+test|tsc|eslint|ruff|mypy)\b|node\s+--test\b/i;
+/** KEEP IN SYNC with plugin/onecarat-agent-office/scripts/forward-lib.mjs (a test compares them). */
+export const TEST_CMD = /(^|[\s;&|(])(npm|pnpm|yarn|bun)\s+(run\s+)?(test|lint|typecheck|check)\b|\b(jest|vitest|pytest|mocha|playwright|cargo\s+test|go\s+test|dotnet\s+test|tsc|eslint|ruff|mypy)\b|node\s+--test\b/i;
 
 export function classifyTool(toolName: string, input: Record<string, unknown> | undefined): { activity: Activity; detail: string } {
   const i = input ?? {};
@@ -51,14 +53,15 @@ export function classifyTool(toolName: string, input: Record<string, unknown> | 
   if (EDIT_TOOLS.has(toolName)) return { activity: 'editing', detail: displayPath(i.file_path ?? i.notebook_path) };
   if (SHELL_TOOLS.has(toolName)) {
     const cmd = typeof i.command === 'string' ? i.command : '';
-    return { activity: TEST_CMD.test(cmd) ? 'testing' : 'executing', detail: clip(maskSecrets(cmd), 80) };
+    // The forwarder sends no command, only whether it runs tests (`is_test`). A raw hook input (the demo) has the command.
+    return { activity: i.is_test === true || TEST_CMD.test(cmd) ? 'testing' : 'executing', detail: clip(maskSecrets(cmd), 80) };
   }
   if (WEB_TOOLS.has(toolName)) {
     const target = typeof i.url === 'string' ? safeHost(i.url) : typeof i.query === 'string' ? clip(maskSecrets(i.query), 60) : '';
     return { activity: 'researching', detail: target };
   }
   if (REPORT_TOOLS.has(toolName)) return { activity: 'reporting', detail: '' };
-  if (toolName === 'Agent' || toolName === 'Task') return { activity: 'other', detail: clip(String(i.description ?? ''), 60) };
+  if (toolName === 'Agent' || toolName === 'Task') return { activity: 'other', detail: clip(typeof i.description === 'string' ? i.description : '', 60) };
   // Desktop app's own turn bookkeeping (update_plan, wrap_up): planning, not running a command.
   if (toolName.startsWith('mcp__ccd_turn__')) return { activity: 'thinking', detail: '' };
   if (toolName.startsWith('mcp__')) return { activity: 'other', detail: toolName.split('__').slice(1).join(' / ') };
@@ -73,15 +76,16 @@ function safeHost(u: string): string {
   }
 }
 
+/** The wrappers we have seen. KEEP IN SYNC with plugin/onecarat-agent-office/scripts/forward-lib.mjs (a test compares them). */
+export const INJECTED_TAGS: readonly string[] = ['agent-message', 'task-notification', 'system-reminder', 'scheduled-task', 'channel-message', 'session-message'];
+
 /** Turns Claude Code started itself arrive as UserPromptSubmit (documented). Detect the wrappers we have seen. */
 export function classifyPrompt(text: string): { injected: false } | { injected: true; kind: string; fromAgentId?: string; taskStatus?: string } {
   const t = text.trimStart();
   const m = /^<([a-z][a-z0-9-]*)\b([^>]*)>/i.exec(t);
   if (!m) return { injected: false };
   const tag = m[1]!.toLowerCase();
-  if (!['agent-message', 'task-notification', 'system-reminder', 'scheduled-task', 'channel-message', 'session-message'].includes(tag)) {
-    return { injected: false };
-  }
+  if (!INJECTED_TAGS.includes(tag)) return { injected: false };
   // agent-message carries from="<agent id>"; a background subagent's task-notification carries <task-id><agent id></task-id>.
   const from = /\bfrom="([^"]+)"/.exec(m[2] ?? '')?.[1] ?? (tag === 'task-notification' ? /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(t)?.[1] : undefined);
   // The notification's own <status> (before the free-text result, which is the subagent's words).
@@ -101,24 +105,30 @@ function backgroundTasks(v: unknown): BackgroundTask[] | undefined {
   return out;
 }
 
-export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEvent[] {
+const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+const obj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+
+export function normalizeHook(raw: HookInput, ctx: NormalizeContext): OfficeEvent[] {
+  if (!obj(raw)) return [];
+  // tool_input must be an object to be read at all.
+  const input: HookInput = { ...raw, tool_input: obj(raw.tool_input) };
   const sessionId = typeof input.session_id === 'string' ? input.session_id : undefined;
-  const name = input.hook_event_name;
+  const name = str(input.hook_event_name);
   if (!sessionId || !name) return [];
   const agentId = typeof input.agent_id === 'string' && input.agent_id ? input.agent_id : undefined;
   const out: OfficeEvent[] = [];
   const emit = (body: OfficeEventBody, actor: string | undefined = agentId) => {
     out.push({ id: `${ctx.seq}.${out.length}`, at: ctx.at, sessionId, source: ctx.source, agentId: actor, agentType: actor && actor === agentId && typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : undefined, cwd: typeof input.cwd === 'string' ? input.cwd : undefined, permissionMode: typeof input.permission_mode === 'string' ? input.permission_mode : undefined, ...body } as OfficeEvent);
   };
-  const toolName = String(input.tool_name ?? '');
-  const toolUseId = String(input.tool_use_id ?? '');
+  const toolName = str(input.tool_name) ?? '';
+  const toolUseId = str(input.tool_use_id) ?? '';
 
   switch (name) {
     case 'SessionStart':
-      emit({ type: 'session.started', cwd: input.cwd, origin: input.source }, undefined);
+      emit({ type: 'session.started', cwd: str(input.cwd), origin: str(input.source) }, undefined);
       break;
     case 'SessionEnd':
-      emit({ type: 'session.ended', reason: input.reason }, undefined);
+      emit({ type: 'session.ended', reason: str(input.reason) }, undefined);
       break;
     case 'UserPromptSubmit': {
       const text = typeof input.prompt === 'string' ? input.prompt : '';
@@ -130,7 +140,7 @@ export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEv
     case 'PreToolUse': {
       if (!agentId && (toolName === 'Agent' || toolName === 'Task')) {
         const ti = input.tool_input ?? {};
-        emit({ type: 'subagent.requested', toolUseId, description: clip(String(ti.description ?? ''), 80), subagentType: String(ti.subagent_type ?? 'general-purpose') });
+        emit({ type: 'subagent.requested', toolUseId, description: clip(str(ti.description) ?? '', 80), subagentType: str(ti.subagent_type) ?? 'general-purpose' });
       }
       if (agentId && toolName === 'SubagentHandback') {
         const msg = input.tool_input?.message;
@@ -144,7 +154,7 @@ export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEv
       emit({ type: 'tool.finished', toolUseId, toolName, durationMs: typeof input.duration_ms === 'number' ? input.duration_ms : undefined });
       // Also for a subagent's own Agent call (a nested helper): the caller is this event's agent.
       if (toolName === 'Agent' || toolName === 'Task') {
-        const r = input.tool_response as Record<string, unknown> | undefined;
+        const r = obj(input.tool_response);
         const childId = typeof r?.agentId === 'string' ? r.agentId : undefined;
         if (childId) emit({ type: 'subagent.linked', toolUseId, childId, finished: r?.isAsync !== true });
       }
@@ -156,7 +166,7 @@ export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEv
       break;
     }
     case 'PostToolUseFailure':
-      emit({ type: 'tool.failed', toolUseId: toolUseId || undefined, toolName, error: clip(maskSecrets(String(input.error ?? '')), 160), interrupted: input.is_interrupt === true });
+      emit({ type: 'tool.failed', toolUseId: toolUseId || undefined, toolName, error: clip(maskSecrets(str(input.error) ?? ''), 160), interrupted: input.is_interrupt === true });
       break;
     case 'PermissionRequest': {
       const { detail } = classifyTool(toolName, input.tool_input);
@@ -164,15 +174,15 @@ export function normalizeHook(input: HookInput, ctx: NormalizeContext): OfficeEv
       break;
     }
     case 'Notification':
-      emit({ type: 'notification', kind: String(input.notification_type ?? 'unknown'), message: clip(maskSecrets(String(input.message ?? '')), 120) });
+      emit({ type: 'notification', kind: str(input.notification_type) ?? 'unknown', message: clip(maskSecrets(str(input.message) ?? ''), 120) });
       break;
     case 'SubagentStart':
-      if (agentId) emit({ type: 'subagent.started', childId: agentId, agentType: String(input.agent_type ?? '') }, undefined);
+      if (agentId) emit({ type: 'subagent.started', childId: agentId, agentType: str(input.agent_type) ?? '' }, undefined);
       break;
     case 'SubagentStop':
       if (agentId) {
         const last = typeof input.last_assistant_message === 'string' && input.last_assistant_message ? input.last_assistant_message : undefined;
-        emit({ type: 'subagent.stopped', childId: agentId, agentType: String(input.agent_type ?? ''), lastMessage: last }, undefined);
+        emit({ type: 'subagent.stopped', childId: agentId, agentType: str(input.agent_type) ?? '', lastMessage: last }, undefined);
       }
       break;
     case 'Stop': {

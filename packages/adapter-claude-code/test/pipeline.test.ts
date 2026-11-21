@@ -305,3 +305,53 @@ test('a helper that sends no start and no stop (web-fetch): ended when its Agent
   s = feed(s, { hook_event_name: 'PreToolUse', session_id: 'W', agent_id: 'wf3', agent_type: 'web-fetch', tool_name: 'WebFetch', tool_use_id: 'f4', tool_input: { url: 'https://example.com/d' } });
   assert.equal(agent('wf3').status, 'working');
 });
+// The forwarder is plain JavaScript shipped as it is; this is the function every hook goes through.
+// @ts-expect-error no type declarations: it is not TypeScript
+import { INJECTED_TAGS as forwarderTags, TEST_CMD as forwarderTestCmd, pickHookFields } from '../../../plugin/onecarat-agent-office/scripts/forward-lib.mjs';
+import { INJECTED_TAGS, TEST_CMD } from '../src/index.ts';
+
+test('the forwarder decides "is it a test" and "who started this turn" by the same rules as the adapter', () => {
+  assert.equal(forwarderTestCmd.source, TEST_CMD.source);
+  assert.equal(forwarderTestCmd.flags, TEST_CMD.flags);
+  assert.deepEqual([...forwarderTags], [...INJECTED_TAGS]);
+});
+
+test('the picture is the same from what the forwarder sends as from the whole hook input (no text is needed)', () => {
+  // The demo replay once as Claude Code hands it to a hook, once as the forwarder passes it on.
+  let whole = initialOfficeState;
+  let sent = initialOfficeState;
+  let n = 0;
+  const picture = (s: OfficeState) =>
+    Object.values(s.sessions).map((x) => [x.id, x.cwd, x.endedAt, x.order, Object.values(x.agents).map((a) => [a.id, a.role, a.agentType, a.label, a.status, a.outcome, a.acknowledged, a.reported, a.failureStreak, a.waits, expressionOf(a)])]);
+  for (const { at, hook } of demo.events) {
+    n++;
+    for (const e of normalizeHook(hook, { source: 'demo', at, seq: n })) whole = reduceOffice(whole, e);
+    for (const e of normalizeHook(pickHookFields(hook) as HookInput, { source: 'demo', at, seq: n })) sent = reduceOffice(sent, e);
+    assert.deepEqual(picture(sent), picture(whole), `after event ${n} (${hook.hook_event_name})`);
+  }
+  assert.ok(n > 30);
+  // The same for a test run, a task notification and a failure, which the demo has in other shapes.
+  const more: HookInput[] = [
+    { hook_event_name: 'UserPromptSubmit', session_id: 'X', cwd: 'C:/proj/x', prompt: 'please run the tests' },
+    { hook_event_name: 'PreToolUse', session_id: 'X', tool_name: 'Agent', tool_use_id: 'A1', tool_input: { description: 'check', subagent_type: 'Explore' } },
+    { hook_event_name: 'SubagentStart', session_id: 'X', agent_id: 'a1', agent_type: 'Explore' },
+    { hook_event_name: 'PostToolUse', session_id: 'X', tool_name: 'Agent', tool_use_id: 'A1', tool_input: {}, tool_response: { agentId: 'a1', isAsync: true } },
+    { hook_event_name: 'PreToolUse', session_id: 'X', agent_id: 'a1', agent_type: 'Explore', tool_name: 'PowerShell', tool_use_id: 'p1', tool_input: { command: 'npm run typecheck' } },
+    { hook_event_name: 'PermissionRequest', session_id: 'X', agent_id: 'a1', agent_type: 'Explore', tool_name: 'PowerShell', tool_input: { command: 'npm run typecheck' } },
+    { hook_event_name: 'PostToolUseFailure', session_id: 'X', agent_id: 'a1', agent_type: 'Explore', tool_name: 'PowerShell', tool_use_id: 'p1', error: 'exit 1', is_interrupt: false },
+    { hook_event_name: 'SubagentStop', session_id: 'X', agent_id: 'a1', agent_type: 'Explore', last_assistant_message: 'done' },
+    { hook_event_name: 'UserPromptSubmit', session_id: 'X', prompt: '<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n<result>all good</result>\n</task-notification>' },
+    { hook_event_name: 'Stop', session_id: 'X', last_assistant_message: 'finished', background_tasks: [] } as HookInput,
+  ];
+  let testing = false;
+  for (const hook of more) {
+    n++;
+    for (const e of normalizeHook(hook, { source: 'live', at: n * 1000, seq: n })) whole = reduceOffice(whole, e);
+    for (const e of normalizeHook(pickHookFields(hook) as HookInput, { source: 'live', at: n * 1000, seq: n })) sent = reduceOffice(sent, e);
+    assert.deepEqual(picture(sent), picture(whole), `after ${hook.hook_event_name}`);
+    if (sent.sessions.X?.agents.a1?.activity === 'testing') testing = true;
+  }
+  assert.ok(testing, 'a test run is still shown as testing, without its command');
+  assert.equal(sent.sessions.X!.agents.a1!.acknowledged, true, 'the task notification still says whose report arrived');
+  assert.ok(!JSON.stringify(sent).includes('please run') && !JSON.stringify(sent).includes('typecheck') && !JSON.stringify(sent).includes('all good'));
+});

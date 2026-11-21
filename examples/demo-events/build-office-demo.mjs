@@ -1,6 +1,6 @@
 // Builds office-demo.json: a SCRIPTED replay in raw Claude Code hook-input shape.
 // It is demo data only (session id starts with "demo-"); it never mixes with live events.
-// Field shapes follow what Claude Code 2.1.319 actually sent (docs/event-support-matrix.md).
+// Field shapes follow what Claude Code 2.1.319 actually sent (docs/hook-events.md).
 // Run: node examples/demo-events/build-office-demo.mjs
 import fs from 'node:fs';
 import path from 'node:path';

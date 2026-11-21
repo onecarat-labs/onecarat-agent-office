@@ -1,12 +1,14 @@
 {
   "name": "onecarat",
   "description": "Onecarat Agent Office — visual companion apps for coding agents",
-  "owner": { "name": "onecarat-labs" },
+  "owner": {
+    "name": "onecarat-labs"
+  },
   "plugins": [
     {
       "name": "onecarat-agent-office",
       "source": "./plugin/onecarat-agent-office",
-      "description": "Watch Claude Code and its real subagents work in a small office in your browser (local; no extra model usage)."
+      "description": "A small always-on-top window that shows Claude Code and its real subagents at work (Windows; local; watch-only)."
     }
   ]
 }

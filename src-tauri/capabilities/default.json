@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The windows only call the app's own three commands (poll, set_status, close_me). No Tauri API is granted.",
+  "windows": ["*"],
+  "permissions": []
+}

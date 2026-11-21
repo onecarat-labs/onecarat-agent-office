@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Claude Code command hook -> Onecarat Agent Office bridge (127.0.0.1).
+// Claude Code command hook -> the Onecarat Agent Office app on this PC (127.0.0.1). One way only: nothing comes back.
 // Configure in exec form with async: { "type": "command", "command": "node", "args": ["<this file>"], "async": true, "timeout": 5 }
 // Guarantees: always exits 0 and prints nothing, so Claude Code never shows a hook error and never waits on Office.
 // When Office is not running (no runtime file, or a stale one) it does not even open a connection.
@@ -7,11 +7,14 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
-import { looksStale, pickHookFields, proofMatches, runtimeFilePath, terminalMarker } from './forward-lib.mjs';
+import { looksStale, pickHookFields, proofMatches, runtimeFilePath } from './forward-lib.mjs';
 
 const hookTime = Date.now();
 const done = () => process.exit(0);
 setTimeout(done, 3000).unref();
+// Whatever goes wrong (a runtime file with values Node refuses, for one): still silent, still exit 0.
+process.on('uncaughtException', done);
+process.on('unhandledRejection', done);
 
 let info;
 try {
@@ -78,7 +81,6 @@ function post(body) {
         'content-length': body.length,
         'x-office-token': info.token,
         'x-office-hook-time': String(hookTime),
-        ...terminalMarker(),
       },
     },
     (res) => {

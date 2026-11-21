@@ -1,52 +1,35 @@
 #!/usr/bin/env node
-// Onecarat Agent Office launcher: check | start | stop | status | open
-// Plain Node, no dependencies at run time. It never calls a model and never touches Claude credentials.
-// It runs claude itself in one case only: `check` runs `claude --version` (see claude-version.ts).
+// Onecarat Agent Office launcher: check | start | stop | status
+// Plain Node, no dependencies at run time. It starts and stops the small-window app; it never runs claude,
+// never calls a model and never touches Claude credentials or settings.
 import fs from 'node:fs';
-import http from 'node:http';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { readRuntimeFile, removeRuntimeFile, type RuntimeInfo } from '@onecarat/event-bridge/runtime-file';
-import { childEnv } from '@onecarat/event-bridge/child-env';
-import { resolveClaude } from '@onecarat/event-bridge/claude-path';
-import { askOffice } from '@onecarat/event-bridge/proof';
-import { openWithKey } from '@onecarat/event-bridge/open-browser';
-import { bridgeArgs, parseLauncherArgs } from './args.ts';
-import { readClaudeVersion, researchLines } from './claude-version.ts';
+import { launcherText } from '@onecarat/domain';
+import { appArgs, parseLauncherArgs } from './args.ts';
+import { detectLang } from './lang.ts';
+import { askApp, readRuntimeFile, removeRuntimeFile, tellApp, type RuntimeInfo } from './runtime.ts';
 
 const MIN_NODE_MAJOR = 18;
+const DEFAULT_PORT = 47821;
+const EXE = 'onecarat-agent-office.exe';
 const here = path.dirname(fileURLToPath(import.meta.url));
-// Bundled layout (plugin/.../dist/office.mjs next to bridge.mjs) or the dev source tree.
-const bundledBridge = path.join(here, 'bridge.mjs');
-const devBridge = path.resolve(here, '../../event-bridge/src/main.ts');
-const bridgeEntry = fs.existsSync(bundledBridge) ? bundledBridge : devBridge;
+// Shipped layout (plugin/.../dist/office.mjs next to the exe) or the development tree (cargo's output).
+const exePath = [path.join(here, EXE), path.resolve(here, '../../../src-tauri/target/release', EXE)].find((p) => fs.existsSync(p));
+
+/** Every message below comes from the one table of words; the language follows the Windows display language. */
+const t = launcherText[detectLang()];
 
 const parsed = parseLauncherArgs(process.argv.slice(2));
 if ('error' in parsed) {
-  console.error(parsed.error);
-  console.error('Usage: office <check|start|stop|status|open> [--port N] [--cwd DIR] [--no-terminal] [--no-open]');
+  console.error(parsed.error === 'badPort' ? t.badPort : t[parsed.error](parsed.arg));
+  console.error(t.usage);
   process.exit(2);
 }
 const opts = parsed;
 
-interface Health {
-  ok: boolean;
-  events?: number;
-  clients?: number;
-  terminal?: { available: boolean; reason?: string; running: boolean; cwd: string; claudePath?: string };
-}
-
-/**
- * Asks the port from the runtime file. `ok` only when the answer proves it holds that file's token (proof.ts):
- * the app name alone could be answered by anything that took the port after a crash.
- */
-async function health(port: number, token: string, timeoutMs = 800): Promise<Health> {
-  const a = await askOffice(port, token, timeoutMs);
-  if (!a.ok || !a.body) return { ok: false };
-  const j = a.body as { events?: number; clients?: number; terminal?: Health['terminal'] };
-  return { ok: true, events: j.events, clients: j.clients, terminal: j.terminal };
-}
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function pidAlive(pid: number): boolean {
   try {
@@ -57,92 +40,100 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-/** The runtime file points at a live Office (health answered). A stale file is removed. */
-async function running(): Promise<RuntimeInfo | undefined> {
+/**
+ * The runtime file points at a live app (it proved the token). A stale file is removed.
+ * 'silent': its process exists but gave no answer in time. That is not proof of a stale file (the app may only
+ * be busy), and removing the file of a running app would cut it off from every hook until it is restarted
+ * (audit 2026-11-21). So nothing is touched.
+ */
+async function running(): Promise<RuntimeInfo | 'silent' | undefined> {
   const info = readRuntimeFile();
   if (!info) return undefined;
-  if ((await health(info.port, info.token)).ok) return info;
-  // Nothing there proves it holds this file's token: a crashed or force-killed bridge left the file behind (even
-  // if its pid was reused, or something else now listens on that port).
+  const h = await askApp(info.port, info.token);
+  if (h.ok) return info;
+  if (h.silent && pidAlive(info.pid)) return 'silent';
+  // A crashed or force-killed app left the file behind (even if its pid or port is used by something else now).
   removeRuntimeFile(info.pid);
   return undefined;
 }
 
+function notAnswering() {
+  console.error(t.notAnswering);
+  process.exitCode = 1;
+}
+
+function supported(): boolean {
+  if (process.platform === 'win32') return true;
+  console.error(t.windowsOnly);
+  process.exitCode = 1;
+  return false;
+}
+
 /**
- * The page gets the per-launch token in the URL fragment: browsers never send the fragment to the server,
- * and the page removes it from the address bar at once. It is handed to the browser only, never printed.
+ * The app must not inherit the calling Claude Code session's own environment markers, nor the variables with
+ * which the window component (WebView2) can be given other program files, another data folder or extra
+ * arguments such as a debugging port.
  */
-function openOffice(info: { port: number; token: string }) {
-  if (!openWithKey(`http://127.0.0.1:${info.port}/#t=${info.token}`)) console.error('Could not open the browser.');
+function appEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (/^(CLAUDE|ANTHROPIC|WEBVIEW2_)/i.test(k)) continue;
+    env[k] = v;
+  }
+  return env;
 }
-
-function terminalLine(h: Health): string {
-  if (!h.terminal) return '';
-  if (!h.terminal.available) return `  Terminal: unavailable (${h.terminal.reason}). Office is read-only; use Claude Code in your own terminal.`;
-  return `  Terminal: claude ${h.terminal.running ? 'running' : 'starts'} in ${h.terminal.cwd}${h.terminal.claudePath ? ` (${h.terminal.claudePath})` : ''}`;
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function start() {
+  if (!supported()) return;
   const cur = await running();
+  if (cur === 'silent') return notAnswering();
   if (cur) {
-    console.log(`Already running: http://127.0.0.1:${cur.port}/`);
-    if (!opts.noOpen) openOffice(cur);
+    // Windows the user closed may come back for their sessions.
+    await tellApp(cur, '/api/show');
+    console.log(t.alreadyRunning);
     return;
   }
-  // Only the allow-listed options reach the bridge. The embedded claude starts where Office was started from
-  // (the session that asked for it) unless --cwd is given.
-  const args = [bridgeEntry, ...bridgeArgs(opts, process.cwd())];
-  // Drop the calling Claude Code session's own markers and private channels; keep the user's configuration.
-  const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', windowsHide: true, env: childEnv() });
+  if (!exePath) {
+    console.error(t.exeNotFound(EXE));
+    process.exitCode = 1;
+    return;
+  }
+  const child = spawn(exePath, appArgs(opts), { detached: true, stdio: 'ignore', env: appEnv() });
+  let exited: number | null = null;
+  child.on('exit', (code) => (exited = code ?? -1));
+  child.on('error', () => (exited = -1));
   child.unref();
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 80; i++) {
     await sleep(150);
     const info = readRuntimeFile();
-    const h = info && info.pid === child.pid ? await health(info.port, info.token) : undefined;
-    if (info && h?.ok) {
-      console.log(`Started Onecarat Agent Office: http://127.0.0.1:${info.port}/`);
-      const line = terminalLine(h);
-      if (line) console.log(line);
-      if (!opts.noOpen) openOffice(info);
+    if (info && info.pid === child.pid && (await askApp(info.port, info.token)).ok) {
+      console.log(t.started);
+      console.log(t.startedHow);
       return;
     }
-    if (child.exitCode !== null) break;
+    if (exited !== null) break;
   }
-  console.error('Could not start the bridge. Try running it in the foreground to see why:');
-  console.error(`  node "${bridgeEntry}"`);
+  if (exited === 3) console.error(t.portInUse(opts.port ?? DEFAULT_PORT, (opts.port ?? DEFAULT_PORT) === 47822 ? 47823 : 47822));
+  else console.error(t.couldNotStart);
   process.exitCode = 1;
 }
 
 async function stop() {
   const info = readRuntimeFile();
   if (!info) {
-    console.log('Not running.');
+    console.log(t.notRunning);
     return;
   }
-  // Only a process that answered as Office is ever signalled: a stale file whose pid was reused by something
-  // else must not get killed.
-  if (!(await health(info.port, info.token)).ok) {
+  // Only a process that proved to be the app is ever asked to stop or signalled: a stale file whose pid was
+  // reused by something else must not get it killed.
+  const h = await askApp(info.port, info.token);
+  if (!h.ok) {
+    if (h.silent && pidAlive(info.pid)) return notAnswering();
     removeRuntimeFile(info.pid);
-    console.log('Not running (a stale runtime file was removed).');
+    console.log(t.notRunningStale);
     return;
   }
-  await new Promise<void>((resolve) => {
-    const req = http.request(
-      { host: '127.0.0.1', port: info.port, path: '/api/shutdown', method: 'POST', timeout: 1500, headers: { 'x-office-token': info.token } },
-      (res) => {
-        res.resume();
-        res.on('end', () => resolve());
-      },
-    );
-    req.on('error', () => resolve());
-    req.on('timeout', () => {
-      req.destroy();
-      resolve();
-    });
-    req.end();
-  });
+  await tellApp(info, '/api/shutdown');
   for (let i = 0; i < 20 && pidAlive(info.pid); i++) await sleep(150);
   if (pidAlive(info.pid)) {
     try {
@@ -152,36 +143,28 @@ async function stop() {
     }
   }
   removeRuntimeFile(info.pid);
-  console.log('Stopped. In-memory events were discarded.');
+  console.log(t.stopped);
 }
 
 async function status() {
   const info = await running();
+  if (info === 'silent') return notAnswering();
   if (!info) {
-    console.log('Not running.');
+    console.log(t.notRunning);
     return;
   }
-  const h = await health(info.port, info.token);
-  console.log(`Running: http://127.0.0.1:${info.port}/  (pid ${info.pid}, events in memory: ${h.events ?? '?'}, open tabs: ${h.clients ?? '?'})`);
-  const line = terminalLine(h);
-  if (line) console.log(line);
+  const h = await askApp(info.port, info.token);
+  console.log(t.running(String(h.version ?? '?'), info.pid, info.port, String(h.windows ?? '?')));
 }
 
 function check() {
   const major = Number(process.versions.node.split('.')[0]);
-  const ok = major >= MIN_NODE_MAJOR;
-  console.log(`Node.js ${process.versions.node} (${process.platform}/${process.arch}) — ${ok ? 'OK' : `too old, need ${MIN_NODE_MAJOR}+`}`);
-  console.log(`Bridge: ${bridgeEntry}`);
-  // The built-in terminal needs an upstream node-pty prebuild for this OS/CPU and a `claude` on PATH.
-  const plat = `${process.platform}-${process.arch}`;
-  const vendor = [path.join(here, 'vendor/node-pty'), path.resolve(here, '../../../plugin/onecarat-agent-office/dist/vendor/node-pty')].find((d) => fs.existsSync(d));
-  const term = vendor && fs.existsSync(path.join(vendor, 'prebuilds', plat));
-  const claude = resolveClaude();
-  console.log(`Built-in terminal: ${term ? `available (${plat})` : `not available for ${plat} — Office runs read-only`}`);
-  console.log(`claude: ${claude ?? 'not found on PATH — the built-in terminal cannot start it'}`);
-  // `check` is the only command that runs claude itself, and only as `claude --version` (claude-version.ts).
-  for (const line of researchLines(readClaudeVersion(claude, childEnv()), !!claude)) console.log(line);
-  if (!ok) process.exitCode = 1;
+  const nodeOk = major >= MIN_NODE_MAJOR;
+  console.log(nodeOk ? t.checkNodeOk(process.versions.node) : t.checkNodeOld(process.versions.node, MIN_NODE_MAJOR));
+  console.log(process.platform === 'win32' ? t.checkWindowsOk : t.checkWindowsNo(process.platform));
+  console.log(exePath ? t.checkApp(exePath) : t.checkAppMissing(EXE));
+  console.log(t.checkWebView);
+  if (!nodeOk || process.platform !== 'win32' || !exePath) process.exitCode = 1;
 }
 
 switch (opts.cmd) {
@@ -189,10 +172,4 @@ switch (opts.cmd) {
   case 'start': await start(); break;
   case 'stop': await stop(); break;
   case 'status': await status(); break;
-  case 'open': {
-    const info = await running();
-    if (info) openOffice(info);
-    else console.log('Not running. Use "start".');
-    break;
-  }
 }
