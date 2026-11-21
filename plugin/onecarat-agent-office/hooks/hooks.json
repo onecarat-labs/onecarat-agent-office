@@ -1,5 +1,5 @@
 {
-  "description": "Forward Claude Code events to the local Onecarat Agent Office (127.0.0.1). Silent no-op when Office is not running.",
+  "description": "Forward Claude Code events to the Onecarat Agent Office app on this PC (127.0.0.1). Silent no-op when the app is not running.",
   "hooks": {
     "SessionStart": [
       {
@@ -108,6 +108,7 @@
     ],
     "Notification": [
       {
+        "matcher": "permission_prompt|idle_prompt",
         "hooks": [
           {
             "type": "command",

@@ -1,0 +1,31 @@
+[package]
+name = "onecarat-agent-office"
+version = "1.0.0"
+description = "Onecarat Agent Office: small always-on-top windows that show what Claude Code is doing"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde_json = "1"
+tiny_http = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+getrandom = "0.2"
+
+[features]
+# Set for the shipped build: the page is embedded in the exe (scripts/build-app.mjs).
+custom-protocol = ["tauri/custom-protocol"]
+# Only for tests/app/check-app.mjs: the windows open a local debugging port when ONECARAT_OFFICE_INSPECT_PORT is set.
+# The shipped exe is built without it (scripts/build-plugin.mjs), so it has no such port.
+inspect = []
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

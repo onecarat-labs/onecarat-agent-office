@@ -1,23 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MANAGER_ID, expressionOf, type AgentState, type SessionState, type Expression } from '@onecarat/domain';
 import { Figure, type FigurePose } from './Figure.tsx';
-import { bubbleShort, bubbleText, dict, displayName, statusText, type Lang } from '../i18n.ts';
+import { bubbleShort, dict, displayName, type Lang } from '../i18n.ts';
+import { STAGE_H, deskSlots, type TimeOfDay } from '../scene.ts';
 
-const W = 1600;
-const H = 480;
+const H = STAGE_H;
 const DESK_FIG_Y = 402; // feet of a figure standing behind a desk (legs hidden by the desk front)
 const AISLE_Y = 462; // feet of a walking figure, in front of the desks
-const MGR_X = 320;
-const REPORT_X = 462;
-const SPAWN_X = 470;
+const MGR_X = 150;
+const MGR_DESK_W = 200;
+const REPORT_X = 292;
+const SPAWN_X = 300;
 const WALK_SPEED = 0.32; // units per ms
 
 /** A finished subagent stays at its desk this long, then stands up, bows to the manager and leaves. */
 const LINGER_MS = 10_000;
-/** A subagent that was already finished this long before we first saw it (page reload, session switch) is not shown. */
+/** A subagent that was already finished this long before it could be shown is not shown. */
 const STALE_MS = 15_000;
 
-/** Goodbye when the user stops Claude Code: everyone stands up, bows toward the viewer, then waves (visual only). */
+/** Goodbye when the session ends: everyone stands up, bows toward the viewer, then waves (visual only). */
 const FW_UP_MS = 500;
 const FW_BOW_MS = 1600;
 const FW_WAVE_MS = 3000;
@@ -44,27 +45,21 @@ interface Choreo { phase: Phase; since: number; dur: number; from: number }
 
 export interface StageProps {
   session?: SessionState;
-  selectedId: string;
-  onSelect: (id: string) => void;
+  /** Width of the drawing in units, and how many subagent desks fit (scene.ts: stageLayout). */
+  w: number;
+  capacity: number;
+  tod: TimeOfDay;
   motion: boolean;
   lang: Lang;
-  demo: boolean;
-  /** When the user pressed "Stop Claude Code" (ms epoch); starts the goodbye. */
+  /** When the session ended (ms epoch); starts the goodbye. */
   farewellAt?: number;
-  /** The shown session is over (SessionEnd, or the built-in claude stopped): after the goodbye the manager keeps waving. */
+  /** The session is over: after the goodbye the manager keeps waving. */
   ended?: boolean;
 }
 
-function slotXs(n: number): { xs: number[]; deskW: number } {
-  const left = 650;
-  const right = 1540;
-  const span = right - left;
-  const spacing = n > 0 ? Math.min(300, span / n) : 300;
-  const start = left + (span - spacing * n) / 2 + spacing / 2;
-  return { xs: Array.from({ length: n }, (_, i) => start + i * spacing), deskW: Math.min(230, spacing - 30) };
-}
+const isFinished = (a: AgentState) => a.status === 'completed' || a.status === 'failed' || a.status === 'unknown';
 
-export function Stage({ session, selectedId, onSelect, motion, lang, demo, farewellAt, ended }: StageProps) {
+export function Stage({ session, w: W, capacity, tod, motion, lang, farewellAt, ended }: StageProps) {
   const t = dict[lang];
   const order = session?.order ?? [];
   const agents = session?.agents ?? {};
@@ -72,9 +67,12 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
   // ---- choreography: walking to desks, reporting, high-five, leaving (visual only) ----
   const [choreo, setChoreo] = useState<Record<string, Choreo>>({});
   // Subagents still in the office. Those who went home free their desk (the session state keeps them).
-  const onStage = order.filter((id) => choreo[id]?.phase !== 'gone');
-  const { xs, deskW } = slotXs(onStage.length);
-  const slotOf = (id: string) => xs[onStage.indexOf(id)] ?? 1200;
+  const present = order.filter((id) => choreo[id]?.phase !== 'gone' && agents[id]);
+  // Only as many as there are desks are drawn; the others wait their turn and are shown as a number.
+  const onStage = present.slice(0, capacity);
+  const hidden = present.length - onStage.length;
+  const { xs, deskW } = deskSlots(W, onStage.length);
+  const slotOf = (id: string) => xs[onStage.indexOf(id)] ?? W - 200;
   const [, setTick] = useState(0);
   const agentsRef = useRef(agents);
   agentsRef.current = agents;
@@ -102,8 +100,13 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
           const a = agentsRef.current[id];
           if (!a) continue;
           const c = next[id];
-          const desk = slotOf(id);
           const finished = a.status === 'completed' || a.status === 'failed';
+          if (!onStage.includes(id)) {
+            // No desk yet. One that finished (or whose session ended) without ever being shown has gone home.
+            if (!c && (isFinished(a) || endedRef.current)) set(id, 'gone');
+            continue;
+          }
+          const desk = slotOf(id);
           const sentHome = !finished && !!endedRef.current && farewellStep(farewellAtRef.current, now) === undefined;
           if (!c) {
             if ((finished || endedRef.current) && now - a.updatedAt > STALE_MS) set(id, 'gone');
@@ -117,7 +120,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
             case 'toDesk': set(id, 'atDesk'); break;
             case 'atDesk':
               if (finished) set(id, 'toManager', walkDur(desk - REPORT_X), desk);
-              else if (sentHome) set(id, 'standUp', motion ? 400 : 0);
+              else if (sentHome || a.status === 'unknown') set(id, 'standUp', motion ? 400 : 0);
               break;
             case 'toManager': set(id, 'atManager', motion ? 1200 : 600); break;
             case 'atManager': {
@@ -142,7 +145,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
     }, 120);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order.join('|'), motion, xs.join('|')]);
+  }, [order.join('|'), onStage.join('|'), motion, xs.join('|')]);
 
   const highfiving = onStage.some((id) => choreo[id]?.phase === 'highfive');
   const bowing = onStage.some((id) => choreo[id]?.phase === 'bow');
@@ -188,7 +191,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
     let face = e.face;
     let bubble = e.bubble;
     if (p.walking) { pose = 'stand'; bubble = undefined; }
-    if (p.phase === 'arrive') { pose = 'stand'; bubble = undefined; face = 'smile'; }
+    if (p.phase === 'arrive' || p.phase === undefined) { pose = 'stand'; bubble = undefined; face = 'smile'; }
     if (p.phase === 'highfive') { pose = 'highfive'; face = 'happy'; }
     if (p.phase === 'atManager') { pose = p.a.status === 'failed' ? 'stand' : 'report'; }
     if ((p.phase === 'done' || p.phase === 'atDesk') && (p.a.status === 'completed' || p.a.status === 'failed')) { pose = 'stand'; }
@@ -197,6 +200,9 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
     if (leaving) { bubble = undefined; face = 'smile'; pose = 'stand'; }
     if (p.phase === 'bow' || p.phase === 'fade') pose = 'bow';
     if (p.farewell && fw) { bubble = undefined; pose = farewellPose(fw); face = fw === 'wave' ? 'happy' : 'smile'; }
+    // A wait for the user's approval is never hidden by a walk or a pose.
+    const waiting = p.a.status === 'waiting_permission' && !p.farewell;
+    if (waiting) { bubble = e.bubble; if (!p.walking) pose = e.pose; }
     const fading = p.phase === 'fade';
     return (
       <g
@@ -207,10 +213,7 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
           ...(fading ? { opacity: 0, transition: `opacity ${motion ? 600 : 0}ms ease-out` } : { transitionDuration: `${p.dur}ms` }),
         }}
       >
-        <FigureButton
-          agent={p.a}
-          selected={selectedId === p.id}
-          onSelect={onSelect}
+        <StageFigure
           lang={lang}
           pose={pose}
           face={face}
@@ -220,7 +223,6 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
           facing={p.facing}
           bubble={bubble}
           busy={e.busy && !p.walking && !p.farewell}
-          sparkle={p.phase === 'highfive' && !p.farewell}
         />
       </g>
     );
@@ -228,69 +230,47 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
 
   const manager = agents[MANAGER_ID];
   const mgrExpr: Expression | undefined = manager ? expressionOf(manager) : undefined;
+  const mgrWaiting = manager?.status === 'waiting_permission';
   // The manager stands behind the desk; during the goodbye it stands up tall (a short rise animation) and, once the
-  // session is over, stays up waving until a session starts again.
+  // session is over, stays up waving until the window closes.
   const waving = !fw && !!ended;
   const goodbye = !!fw || waving;
   const managerFig = () =>
     manager && mgrExpr ? (
       <g transform={`translate(${MGR_X}, ${goodbye ? DESK_FIG_Y - FW_RISE : DESK_FIG_Y})`}>
         <g className={fw === 'up' && motion ? 'farewell-rise' : undefined}>
-          <FigureButton
-            agent={manager}
-            selected={selectedId === MANAGER_ID}
-            onSelect={onSelect}
+          <StageFigure
             lang={lang}
-            pose={fw ? farewellPose(fw) : waving ? 'wave' : highfiving ? 'highfive' : bowing ? 'wave' : mgrExpr.pose}
-            face={fw ? (fw === 'wave' ? 'happy' : 'smile') : waving ? 'happy' : highfiving ? 'happy' : bowing ? 'smile' : mgrExpr.face}
+            pose={fw ? farewellPose(fw) : waving ? 'wave' : mgrWaiting ? mgrExpr.pose : highfiving ? 'highfive' : bowing ? 'wave' : mgrExpr.pose}
+            face={fw ? (fw === 'wave' ? 'happy' : 'smile') : waving ? 'happy' : mgrWaiting ? mgrExpr.face : highfiving ? 'happy' : bowing ? 'smile' : mgrExpr.face}
             sweat={mgrExpr.sweat && !bowing && !goodbye}
             walking={false}
             motion={motion}
             facing={1}
-            bubble={highfiving || bowing || goodbye ? undefined : mgrExpr.bubble}
+            bubble={goodbye ? undefined : mgrWaiting ? mgrExpr.bubble : highfiving || bowing ? undefined : mgrExpr.bubble}
             busy={mgrExpr.busy && !goodbye}
             manager
-            sparkle={false}
           />
         </g>
       </g>
     ) : null;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="group" aria-label={t.office}>
-      {/* backdrop: sky + faint skyline + window mullions */}
-      <rect className="sky" x={0} y={0} width={W} height={H} />
-      <g className="skyline">
-        <rect x={900} y={70} width={60} height={160} /><rect x={970} y={110} width={40} height={120} /><rect x={1180} y={40} width={70} height={190} />
-        <rect x={1260} y={95} width={44} height={135} /><rect x={1420} y={60} width={56} height={170} /><rect x={1486} y={120} width={50} height={110} />
-      </g>
-      {[300, 840, 1180].map((x) => (<rect key={x} x={x} y={0} width={10} height={300} className="skyline" />))}
-      <rect className="floor" x={0} y={300} width={W} height={H - 300} />
-
-      {/* logo sign */}
-      <text x={38} y={70} className="stage-logo">Onecarat <tspan className="stage-logo-labs">Labs</tspan></text>
-
-      {/* plant */}
-      <g transform="translate(110,300)">
-        <path className="plant-leaf" d="M30 30 C 5 0, 0 -40, 18 -70 C 30 -40, 34 -10, 30 30Z" />
-        <path className="plant-leaf" d="M30 30 C 50 -10, 70 -30, 78 -55 C 60 -40, 40 -15, 30 30Z" />
-        <path className="plant-leaf" d="M30 30 C 15 10, -10 0, -18 -20 C 5 -15, 22 5, 30 30Z" />
-        <path className="plant-pot" d="M8 30 h44 l-6 52 h-32Z" />
-      </g>
+    <svg className={`stage-svg tod-${tod}`} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label={t.office}>
+      <Backdrop w={W} tod={tod} />
 
       {/* manager area */}
-      <ellipse className="rug" cx={MGR_X + 20} cy={438} rx={230} ry={40} />
-      <DeskBack x={MGR_X} w={250} manager />
+      <ellipse className="rug" cx={MGR_X + 14} cy={438} rx={170} ry={36} />
+      <DeskBack x={MGR_X} w={MGR_DESK_W} manager />
       {managerFig()}
-      <DeskFront x={MGR_X} w={250} label={t.manager} manager />
+      <DeskFront x={MGR_X} w={MGR_DESK_W} label={t.manager} manager />
 
       {/* subagent desks with seated figures */}
       {onStage.map((id, i) => (
         <g key={`desk-${id}`}>
-          {i > 0 ? <path className="partition" d={`M${xs[i]! - (xs[1]! - xs[0]!) / 2 - 6} 410 l0 -110 l14 -14 l0 110Z`} /> : null}
           <DeskBack x={xs[i]!} w={deskW} />
           {placed.filter((p) => p.id === id && !p.front).map(fig)}
-          <DeskFront x={xs[i]!} w={deskW} label={agents[id] ? displayName(agents[id]!, lang) : 'Agent'} />
+          <DeskFront x={xs[i]!} w={deskW} label={displayName(agents[id]!, lang)} />
         </g>
       ))}
 
@@ -303,36 +283,93 @@ export function Stage({ session, selectedId, onSelect, motion, lang, demo, farew
         </g>
       ) : null}
 
-      {onStage.length === 0 ? (
-        <text x={1080} y={360} textAnchor="middle" className="board-empty">{t.agentsNone}</text>
+      {/* subagents that have no desk in a window this small: a number, never left out silently */}
+      {hidden > 0 ? (
+        <g className="more" transform={`translate(${W - 20}, 20)`} aria-label={t.more(hidden)}>
+          <title>{t.more(hidden)}</title>
+          <rect x={-(String(hidden).length * 24 + 62)} y={0} width={String(hidden).length * 24 + 62} height={56} rx={28} />
+          <text x={-(String(hidden).length * 24 + 62) / 2} y={41} textAnchor="middle">+{hidden}</text>
+        </g>
       ) : null}
     </svg>
   );
 }
 
-export function DeskBack({ x, w, manager }: { x: number; w: number; manager?: boolean }) {
+/** What is seen through the office windows: it follows the PC's clock (scene.ts: timeOfDay). Colours are in styles.css. */
+function Backdrop({ w, tod }: { w: number; tod: TimeOfDay }) {
+  // Buildings as fractions of the width, so they spread with the window: [x, top, width].
+  const towers: [number, number, number][] = [[0.42, 150, 54], [0.5, 110, 40], [0.62, 70, 64], [0.72, 135, 46], [0.84, 95, 58], [0.93, 160, 50]];
+  const sun = tod === 'morning' ? { x: 0.3 * w, y: 232, r: 40 } : tod === 'evening' ? { x: 0.78 * w, y: 236, r: 44 } : { x: 0.6 * w, y: 62, r: 34 };
+  const mullions = Math.max(1, Math.round(w / 420));
+  return (
+    <g className="backdrop">
+      <defs>
+        <linearGradient id="sky-grad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" className="sky-top" />
+          <stop offset="1" className="sky-low" />
+        </linearGradient>
+        <clipPath id="sky-clip"><rect x={0} y={0} width={w} height={300} /></clipPath>
+      </defs>
+      <rect className="wall" x={0} y={0} width={w} height={H} />
+      <rect x={0} y={0} width={w} height={300} fill="url(#sky-grad)" />
+      <g clipPath="url(#sky-clip)">
+        {tod === 'night' ? (
+          <g>
+            {[[0.08, 40], [0.18, 96], [0.27, 30], [0.36, 72], [0.47, 44], [0.58, 22], [0.81, 52], [0.9, 28], [0.97, 84]].map(([fx, y]) => (
+              <circle key={`${fx}`} className="star" cx={fx! * w} cy={y} r={2.6} />
+            ))}
+            <circle className="moon" cx={0.7 * w} cy={74} r={30} />
+            <circle className="moon-cut" cx={0.7 * w + 13} cy={66} r={26} />
+          </g>
+        ) : (
+          <g>
+            <circle className="sun-glow" cx={sun.x} cy={sun.y} r={sun.r * 1.9} />
+            <circle className="sun" cx={sun.x} cy={sun.y} r={sun.r} />
+          </g>
+        )}
+        {towers.map(([fx, top, tw]) => (
+          <g key={fx}>
+            <rect className="tower" x={fx * w} y={top} width={tw} height={300 - top} />
+            {/* a few windows: lit after dark */}
+            {[0, 1, 2, 3].map((r) =>
+              [0, 1].map((c) => ((r + c + Math.round(fx * 100)) % 3 === 0 ? null : (
+                <rect key={`${r}-${c}`} className="tower-win" x={fx * w + 9 + c * (tw / 2 - 4)} y={top + 14 + r * 30} width={tw / 2 - 14} height={14} />
+              ))),
+            )}
+          </g>
+        ))}
+      </g>
+      {Array.from({ length: mullions }, (_, i) => (
+        <rect key={i} className="mullion" x={Math.round(((i + 1) * w) / (mullions + 1)) - 4} y={0} width={8} height={300} />
+      ))}
+      <rect className="sill" x={0} y={296} width={w} height={8} />
+      <rect className="floor" x={0} y={304} width={w} height={H - 304} />
+      <text x={22} y={42} className="stage-logo">Onecarat <tspan className="stage-logo-labs">Labs</tspan></text>
+    </g>
+  );
+}
+
+function DeskBack({ x, w, manager }: { x: number; w: number; manager?: boolean }) {
   return <path className={manager ? 'desk-mgr-top' : 'desk-top'} d={`M${x - w / 2 + 14} 330 h${w - 28} l14 16 h${-w} Z`} />;
 }
 
-export function DeskFront({ x, w, label, manager }: { x: number; w: number; label: string; manager?: boolean }) {
-  const lw = Math.max(90, [...label].reduce((n, c) => n + (/[^\x00-\x7f]/.test(c) ? 19 : 10.5), 0) + 34);
+function DeskFront({ x, w, label, manager }: { x: number; w: number; label: string; manager?: boolean }) {
+  const lw = Math.min(w - 8, Math.max(80, [...label].reduce((n, c) => n + (/[^\x00-\x7f]/.test(c) ? 20 : 11.5), 0) + 30));
   return (
     <g>
       {/* laptop seen from behind */}
       <path className="laptop" d={`M${x + 18} 342 l10 -42 h46 l-6 42Z`} opacity={0.85} />
       <rect className={manager ? 'desk-mgr-front' : 'desk-front'} x={x - w / 2} y={346} width={w} height={70} rx={4} />
-      <g className="nameplate" transform={`translate(${x - lw / 2}, 392)`}>
-        <rect width={lw} height={34} rx={8} />
-        <text x={lw / 2} y={23.5} textAnchor="middle">{label}</text>
+      <g className="nameplate" transform={`translate(${x - lw / 2}, 390)`}>
+        <rect width={lw} height={36} rx={8} />
+        <text x={lw / 2} y={25} textAnchor="middle">{label}</text>
       </g>
     </g>
   );
 }
 
-function FigureButton(props: {
-  agent: AgentState;
-  selected: boolean;
-  onSelect: (id: string) => void;
+/** A figure with its status label. Nothing here reacts to the mouse or the keyboard: the window is for watching. */
+function StageFigure(props: {
   lang: Lang;
   pose: FigurePose;
   face: Expression['face'];
@@ -343,31 +380,12 @@ function FigureButton(props: {
   bubble: Expression['bubble'];
   busy: boolean;
   manager?: boolean;
-  sparkle: boolean;
 }) {
-  const { agent, selected, onSelect, lang, bubble, busy } = props;
-  const label = `${displayName(agent, lang)}: ${statusText[lang][agent.status]}${bubble ? ` — ${bubbleText[lang][bubble.key]}` : ''}`;
+  const { lang, bubble, busy } = props;
   return (
-    <g
-      className={`fig${selected ? ' selected' : ''}`}
-      tabIndex={0}
-      role="button"
-      aria-pressed={selected}
-      aria-label={label}
-      onClick={() => onSelect(agent.id)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          onSelect(agent.id);
-        }
-      }}
-    >
-      {/* hover: the full wording, what it is working on and its task (the label above the head is short) */}
-      <title>{[label + (bubble && agent.activityDetail ? ` · ${agent.activityDetail}` : ''), agent.role === 'subagent' ? agent.task : undefined].filter(Boolean).join('\n')}</title>
-      <rect className="hit" x={-50} y={-190} width={110} height={196} />
-      <rect className="focus-ring" x={-46} y={-188} width={100} height={194} rx={12} />
+    <g className="fig">
       <Figure pose={props.pose} face={props.face} sweat={props.sweat} walking={props.walking} motion={props.motion} facing={props.facing} manager={props.manager} />
-      {bubble ? <Bubble text={bubbleShort[lang][bubble.key]} tone={bubble.tone} busy={busy} attention={ATTENTION.has(bubble.key)} /> : null}
+      {bubble ? <Bubble text={bubbleShort[lang][bubble.key]} tone={bubble.tone} busy={busy} attention={ATTENTION.has(bubble.key)} waiting={bubble.key === 'waiting_permission'} /> : null}
     </g>
   );
 }
@@ -376,35 +394,21 @@ function FigureButton(props: {
 const ATTENTION: ReadonlySet<string> = new Set(['waiting_permission', 'blocked', 'failed', 'retrying']);
 
 /**
- * Small status label above a figure. No progress bar: Claude Code reports no progress, so nothing here may look
- * like one. "busy" is a pulsing dot only.
+ * Status label above a figure. No progress bar: Claude Code reports no progress, so nothing here may look
+ * like one. "busy" is a pulsing dot only. A wait for approval is filled with the warning colour.
  */
-export function Bubble({ text, tone, busy, attention }: { text: string; tone: string; busy: boolean; attention: boolean }) {
-  const tw = [...text].reduce((n, c) => n + (/[^\x00-\x7f]/.test(c) ? 15.5 : 8.4), 0);
-  const dot = busy ? 15 : 0;
-  const w = Math.max(54, Math.round(tw) + 24 + dot);
-  const h = 30;
+function Bubble({ text, tone, busy, attention, waiting }: { text: string; tone: string; busy: boolean; attention: boolean; waiting: boolean }) {
+  const tw = [...text].reduce((n, c) => n + (/[^\x00-\x7f]/.test(c) ? 23 : 12.6), 0);
+  const dot = busy ? 20 : 0;
+  const w = Math.max(70, Math.round(tw) + 30 + dot);
+  const h = 40;
   const x = -w / 2 + 2;
-  const y = -194 - h;
+  const y = -192 - h;
   return (
-    <g className={`bubble tone-${tone}${attention ? ' attention' : ''}`} aria-hidden="true">
+    <g className={`bubble tone-${tone}${attention ? ' attention' : ''}${waiting ? ' waiting' : ''}`} aria-hidden="true">
       <rect x={x} y={y} width={w} height={h} rx={h / 2} />
-      {busy ? <circle className="pulse" cx={x + 16} cy={y + h / 2} r={4} /> : null}
-      <text x={x + dot + (w - dot) / 2} y={y + 20.5} textAnchor="middle">{text}</text>
+      {busy ? <circle className="pulse" cx={x + 20} cy={y + h / 2} r={5.5} /> : null}
+      <text x={x + dot + (w - dot) / 2} y={y + 28} textAnchor="middle">{text}</text>
     </g>
   );
-}
-
-export function useStageKeyboard(session: SessionState | undefined, selectedId: string, onSelect: (id: string) => void) {
-  return useMemo(() => {
-    const ids = [MANAGER_ID, ...(session?.order ?? [])];
-    return (e: React.KeyboardEvent) => {
-      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
-      // Nobody selected (overview): the first key press picks the manager.
-      const i = ids.indexOf(selectedId);
-      const n = i < 0 ? 0 : e.key === 'ArrowRight' ? (i + 1) % ids.length : (i - 1 + ids.length) % ids.length;
-      onSelect(ids[n]!);
-      e.preventDefault();
-    };
-  }, [session?.order, selectedId, onSelect]);
 }

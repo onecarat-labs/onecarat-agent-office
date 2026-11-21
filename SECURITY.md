@@ -1,10 +1,29 @@
-# Security policy
+# セキュリティについて
 
-## Reporting a vulnerability
-Please report security problems **privately**: open this repository's **Security** tab on GitHub and choose **Report a vulnerability**. Do not open a public issue for a security problem. You should get a first reply within a week.
+## 脆弱性の報告
 
-## Supported versions
-Only the latest release of the plugin (0.2.x) receives fixes. Update with `claude plugin update onecarat-agent-office@onecarat`.
+セキュリティ上の問題は、**公開の Issue には書かず**、非公開で報告してください。GitHub でこのリポジトリの **Security** タブを開き、**Report a vulnerability** を選びます。1 週間以内に最初の返事をします。
 
-## What is in scope
-The plugin (`plugin/onecarat-agent-office`), the bridge, the launcher and the UI, as described in [docs/security.md](docs/security.md). That document also states what Office deliberately does not defend against (processes running as the same OS user).
+## 対象の版
+
+修正の対象は、最新のリリース（1.0 系）だけです。更新するには `claude plugin update onecarat-agent-office@onecarat` を実行してください。
+
+## 対象の範囲
+
+プラグイン（`plugin/onecarat-agent-office`）、小窓アプリ（`src-tauri`）、起動スクリプト、画面です。しくみは [docs/architecture.md](docs/architecture.md) に書いています。
+
+## 守っていること、守っていないこと
+
+守っていること:
+
+- 待ち受けは `127.0.0.1` だけ。外部には通信しません。
+- Hook の送信は、起動のたびに作る合言葉（トークン）を持っている送り手からだけ受け付けます。ブラウザからの送信、別のホスト名あての送信は断ります。
+- 転送スクリプトは、相手が本物の小窓アプリだと確かめてから送ります（古い実行時ファイルが残っていても、別のプログラムには送りません）。
+- 本文を読むのは、合言葉が合った Hook の送信だけです。合言葉を持たない送り手は、本文を待たずに断ります（返事をしない相手に待ち受けを止められないようにするためです）。
+- 転送スクリプトは、作業の中身の文章（依頼文、コマンド、ファイルの名前、URL、エラーの文など）を送りません。
+- 受け取ったイベントはメモリ上にだけ置きます。小窓から Claude Code へ何かを送る経路はありません。
+
+守っていないこと:
+
+- 同じ Windows のユーザーで動く別のプログラムからの攻撃。そのようなプログラムは、もともと Claude Code の会話ファイルや設定を直接読めるためです。
+- 同じ PC のプログラムが、待ち受けに大量の接続を張り続けること。小窓の表示が止まるだけで、Claude Code の動作には影響しません。

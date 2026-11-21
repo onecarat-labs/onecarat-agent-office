@@ -3,25 +3,21 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 
-/** KEEP IN SYNC with packages/event-bridge/src/runtime-file.ts (runtimeDir). */
-export function runtimeFilePath(env = process.env, platform = process.platform) {
-  let dir = env.ONECARAT_OFFICE_RUNTIME_DIR;
-  if (!dir) {
-    const home = os.homedir();
-    if (platform === 'win32') dir = path.join(env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'onecarat-agent-office');
-    else if (platform === 'darwin') dir = path.join(home, 'Library', 'Application Support', 'onecarat-agent-office');
-    else dir = path.join(env.XDG_STATE_HOME || path.join(home, '.local', 'state'), 'onecarat-agent-office');
-  }
+/** KEEP IN SYNC with src-tauri/src/main.rs (runtime_file) and packages/launcher/src/runtime.ts. Windows only. */
+export function runtimeFilePath(env = process.env) {
+  const dir = env.ONECARAT_OFFICE_RUNTIME_DIR || path.join(env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'onecarat-agent-office');
   return path.join(dir, 'bridge.json');
 }
 
 /**
- * A runtime file can outlive its bridge (crash, forced kill, power loss). Such a file must not make the hooks
+ * A runtime file can outlive its app (crash, forced kill, power loss). Such a file must not make the hooks
  * post prompts to whatever listens on that port now. Cheap checks first, before any connection:
- * the bridge's process must exist, and the file must not be older than the last boot.
+ * the app's process must exist, and the file must not be older than the last boot.
  */
 export function looksStale(info, { now = Date.now(), uptimeSec = os.uptime(), alive = pidAlive } = {}) {
-  if (!info || typeof info.port !== 'number' || typeof info.token !== 'string') return true;
+  if (!info || typeof info.token !== 'string') return true;
+  // Not a port this app could have written (it listens on 1024-65535): Node would throw on it instead of failing.
+  if (!Number.isInteger(info.port) || info.port < 1024 || info.port > 65535) return true;
   if (typeof info.pid === 'number' && !alive(info.pid)) return true;
   // Written before this boot (2 minutes of slack for clock adjustments).
   if (typeof info.startedAt === 'number' && info.startedAt < now - uptimeSec * 1000 - 120_000) return true;
@@ -39,7 +35,7 @@ export function pidAlive(pid) {
 
 /**
  * The listener must prove it holds the token before anything is posted to it (a pid can be reused).
- * KEEP IN SYNC with packages/event-bridge/src/proof.ts (healthProof).
+ * KEEP IN SYNC with src-tauri/src/server.rs (health_proof).
  */
 export function healthProof(token, nonce) {
   return crypto.createHmac('sha256', token).update(`office-health:${nonce}`).digest('hex');
@@ -52,16 +48,44 @@ export function proofMatches(given, token, nonce) {
 
 const clip = (v, n) => (typeof v === 'string' ? (v.length > n ? v.slice(0, n) : v) : undefined);
 
+// The window shows figures, not text, so no text is sent: no prompt, no command, no path, no URL, no search
+// words, no error message. What the figures need is decided HERE, and only the answer is sent:
+//   - a command: whether it runs tests or checks (`is_test`), nothing of the command itself;
+//   - a prompt: nothing of what the user wrote. Of a turn Claude Code started itself, only the wrapper it wrote
+//     (`promptHead`), which says which subagent reported and how its task ended;
+//   - the last message and a report: one character (the window only needs to know that there was one).
 const TOP = {
   hook_event_name: 100, session_id: 200, cwd: 1000, agent_id: 200, agent_type: 200, source: 50, reason: 50,
-  prompt: 4000, tool_name: 200, tool_use_id: 200, error: 600, notification_type: 100, message: 600,
-  last_assistant_message: 4000, permission_mode: 50,
+  tool_name: 200, tool_use_id: 200, notification_type: 100,
+  last_assistant_message: 1, permission_mode: 50,
 };
-// tool_input fields the adapter reads. File CONTENTS (content, old_string, new_string, edits ...) are never forwarded.
-const TOOL_INPUT = { file_path: 1000, path: 1000, notebook_path: 1000, pattern: 300, command: 600, url: 1000, query: 300, description: 300, subagent_type: 200, message: 4000 };
+// tool_input fields that are sent as they are (clipped): which kind of subagent was asked for, and that a report exists.
+const TOOL_INPUT = { subagent_type: 200, message: 1 };
+
+/** A command that runs tests or checks. KEEP IN SYNC with packages/adapter-claude-code/src/normalize.ts (a test compares them). */
+export const TEST_CMD = /(^|[\s;&|(])(npm|pnpm|yarn|bun)\s+(run\s+)?(test|lint|typecheck|check)\b|\b(jest|vitest|pytest|mocha|playwright|cargo\s+test|go\s+test|dotnet\s+test|tsc|eslint|ruff|mypy)\b|node\s+--test\b/i;
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
+
+/** Wrappers of turns Claude Code starts itself. KEEP IN SYNC with normalize.ts (INJECTED_TAGS; a test compares them). */
+export const INJECTED_TAGS = ['agent-message', 'task-notification', 'system-reminder', 'scheduled-task', 'channel-message', 'session-message'];
 
 /**
- * Data minimization at the source: keep only what Office displays, clipped.
+ * What is sent of a prompt. A prompt the user wrote: '' (the window only needs to know that there was one).
+ * A turn Claude Code started itself begins with a wrapper tag it wrote: that opening tag is sent (it names the
+ * subagent that reported), and of a task notification the lines before its <result> (task id and status).
+ * The words of the subagent, which follow, are not sent.
+ */
+export function promptHead(prompt) {
+  if (typeof prompt !== 'string') return undefined;
+  const t = prompt.trimStart().slice(0, 4000);
+  const m = /^<([a-z][a-z0-9-]*)\b[^>]*>/i.exec(t);
+  if (!m || !INJECTED_TAGS.includes(m[1].toLowerCase())) return '';
+  const head = m[1].toLowerCase() === 'task-notification' ? t.split('<result>')[0] : m[0];
+  return head.slice(0, 400);
+}
+
+/**
+ * Data minimization at the source: keep only what the window needs to draw the figures, clipped.
  * Everything else in the hook input (transcript paths, tool outputs, file contents) is dropped here.
  */
 export function pickHookFields(input) {
@@ -73,8 +97,12 @@ export function pickHookFields(input) {
   }
   if (typeof input.duration_ms === 'number') out.duration_ms = input.duration_ms;
   if (typeof input.is_interrupt === 'boolean') out.is_interrupt = input.is_interrupt;
+  const prompt = promptHead(input.prompt);
+  if (prompt !== undefined) out.prompt = prompt;
   if (input.tool_input && typeof input.tool_input === 'object') {
     const ti = {};
+    const command = input.tool_input.command;
+    if (SHELL_TOOLS.has(input.tool_name) && typeof command === 'string') ti.is_test = TEST_CMD.test(command.slice(0, 4000));
     for (const [k, n] of Object.entries(TOOL_INPUT)) {
       const v = clip(input.tool_input[k], n);
       if (v !== undefined) ti[k] = v;
@@ -87,7 +115,7 @@ export function pickHookFields(input) {
     out.tool_response = { agentId: clip(r.agentId, 200), isAsync: r.isAsync === true, status: clip(r.status, 50) };
   }
   // Stop: which background tasks are still running (id, state and type only; never their description or output).
-  // It is how Office learns that a background subagent has really ended.
+  // It is how the window learns that a background subagent has really ended.
   if (input.hook_event_name === 'Stop' && Array.isArray(input.background_tasks)) {
     out.background_tasks = input.background_tasks
       .filter((t) => t && typeof t === 'object' && typeof t.id === 'string')
@@ -95,13 +123,4 @@ export function pickHookFields(input) {
       .map((t) => ({ id: clip(t.id, 200), status: clip(t.status, 50), agent_type: clip(t.agent_type, 200) }));
   }
   return out;
-}
-
-/**
- * Office's built-in terminal starts `claude` with ONECARAT_OFFICE_TERMINAL=<run id> (a marker, not a secret), and
- * hooks inherit it. Passing it on lets Office follow the session of that terminal, also after --continue/--resume.
- */
-export function terminalMarker(env = process.env) {
-  const v = env.ONECARAT_OFFICE_TERMINAL;
-  return typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v) ? { 'x-office-terminal': v } : {};
 }

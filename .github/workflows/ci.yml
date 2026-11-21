@@ -4,10 +4,8 @@ permissions:
   contents: read
 jobs:
   test:
-    strategy:
-      matrix:
-        os: [windows-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+    # Windows only: the app is a Windows program.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -17,10 +15,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-  dist-matches-source:
-    # The plugin ships pre-built JS. This job rebuilds it and fails if the committed files differ,
-    # so anyone can verify that plugin/onecarat-agent-office/dist is exactly what the public source produces.
-    runs-on: ubuntu-latest
+      # The app embeds the built page, so the page is built first. Rust is preinstalled on the runner.
+      - run: npm run build
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+  launcher-matches-source:
+    # The plugin ships a pre-built launcher (dist/office.mjs). This job rebuilds it and fails if the committed
+    # file differs. The exe next to it is NOT checked this way: a Rust build is not byte-for-byte repeatable.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -28,16 +29,5 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build:plugin
-      - run: git status --porcelain -- plugin/onecarat-agent-office/dist
-      - run: git diff --exit-code -- plugin/onecarat-agent-office/dist && test -z "$(git status --porcelain -- plugin/onecarat-agent-office/dist)"
-  vendor-matches-upstream:
-    # dist/vendor/node-pty is not built by us: every file must be byte-identical to the published
-    # node-pty@1.1.0 npm tarball, whose sha512 must match the pinned integrity (scripts/vendor-node-pty.mjs).
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24
-      - run: node scripts/vendor-node-pty.mjs --check
+      - run: node scripts/build-plugin.mjs --no-app
+      - run: git diff --exit-code -- plugin/onecarat-agent-office/dist/office.mjs

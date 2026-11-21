@@ -1,8 +1,17 @@
 {
   "name": "onecarat-agent-office",
-  "version": "0.3.0",
-  "description": "Visual companion for Claude Code: watch the main agent and its real subagents work in a small office in your browser. Local only; no extra model usage; the chat panel can host your own interactive claude.",
-  "author": { "name": "onecarat-labs" },
+  "version": "1.0.0",
+  "description": "A small always-on-top window that shows Claude Code and its real subagents at work as stick figures. Windows only; local only; watch-only (no input, no extra model usage).",
+  "author": {
+    "name": "onecarat-labs"
+  },
   "license": "MIT",
-  "keywords": ["visualization", "subagents", "hooks", "companion", "local"]
+  "keywords": [
+    "visualization",
+    "subagents",
+    "hooks",
+    "companion",
+    "local",
+    "windows"
+  ]
 }

@@ -1,5 +1,14 @@
-# onecarat-agent-office (Claude Code plugin)
+# onecarat-agent-office（Claude Code プラグイン）
 
-Watch Claude Code's main agent and the subagents it really starts work in a small office in your browser. Local only (127.0.0.1); events and terminal output are kept in memory only; it never calls a model and never reads credentials. The chat panel can host your own interactive `claude` in a built-in terminal (you type; Office never types for you). Requires Node.js 18+. Start it with `/onecarat-agent-office:office start`.
+Claude Code のメインエージェントと、実際に起動されたサブエージェントが働く様子を、画面右上の小さな窓（常に最前面）に棒人間で表示します。Windows 専用。見るだけの窓で、入力・送信・承認はできません。通信は自分の PC 内（127.0.0.1）だけ、イベントはメモリ上にだけ置き、モデルは呼びません。
 
-Contents: `hooks/hooks.json` (async command hooks -> `scripts/forward.mjs`), `skills/office/SKILL.md` (start/stop/status), `dist/` (bundled bridge, launcher and UI, generated from the repository's `packages/` by `npm run build:plugin`). See the repository README for details.
+- 起動: `/onecarat-agent-office:office start`（または「Onecarat Agent Office を起動して」）
+- 必要なもの: Windows 10 / 11、Node.js 18 以上
+
+中身:
+
+- `hooks/hooks.json` … 非同期のコマンド Hook。`scripts/forward.mjs` を呼びます。
+- `skills/office/SKILL.md` … start / stop / status / check
+- `dist/` … 起動用スクリプト `office.mjs` と、小窓アプリ `onecarat-agent-office.exe`。リポジトリの `packages/` と `src-tauri/` から `npm run build:plugin` で作ります。
+
+詳しくはリポジトリの README を参照してください。
